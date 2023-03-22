@@ -1,23 +1,23 @@
-# NSL-3130AA ROS2
---- NSL-3130AA ROS2 demo ---
+# NSL-3130AA ROS1
+--- NSL-3130AA ROS1 demo ---
 
 1. Build env
- - Ubuntu22.04.1 LTS
- - ROS2 Humble
+ - Ubuntu18.04
+ - ROS1 Melodic
  - OPENCV 4.5.4
  
  
 2. Build NSL-3130AA demo
 ```
 $ cd NSL3130_driver
-$ colcon build --packages-select roboscan_nsl3130
-$ . install/setup.bash
+$ catkin_make
+$ source ./devel/setup.bash
 ```
  
 3. Start commands
 ```
-$ ros2 run roboscan_nsl3130 roboscan_publish_node
-$ ros2 launch roboscan_nsl3130 camera.Launch.py
+$ rosrun roboscan_nsl3130 roboscan_publish_node
+$ roslaunch roboscan_nsl3130 camera.Launch
 ```
 
 # NSL-3130AA View
