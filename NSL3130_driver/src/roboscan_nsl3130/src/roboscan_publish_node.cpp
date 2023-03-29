@@ -76,6 +76,8 @@ int8_t bSaturation = 1;
 double transformAngle = 0;
 int cutPixels = 0;
 bool cvShow = false;
+float maxDistance;
+
 
 uint32_t frameSeq;
 boost::signals2::connection connectionFrames;
@@ -248,6 +250,7 @@ void setParameters()
     else if(frequencyModulation == 2)  modIndex = 2;
     else    modIndex = 3;
 
+    maxDistance = frequencyModulation == 0 ? 6500.0f : frequencyModulation == 1 ? 12500.0f : frequencyModulation == 2 ? 25000.0f : 50000.0f;
     interface.setModulation(modIndex, channel);
 
     interface.setRoi(roi_leftX, roi_topY, roi_rightX, roi_bottomY);
@@ -538,7 +541,7 @@ void updateFrame(std::shared_ptr<Frame> frame)
                     imageLidar.at<Vec3b>(y, x)[2] = 0;
                 }
 
-                if (distance > 0 && distance < 64000
+                if (distance > 0 && distance < maxDistance
                     && y > -x + cutPixels
                     && y > x - (319-cutPixels)
                     && y < x + (239-cutPixels)
