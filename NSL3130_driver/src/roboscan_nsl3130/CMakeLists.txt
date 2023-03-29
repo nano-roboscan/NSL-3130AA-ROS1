@@ -70,10 +70,10 @@ find_package(OpenCV REQUIRED)
 #   Action2.action
 # )
 
-add_message_files(
-    FILES
-    pose.msg
-)
+#add_message_files(
+#    FILES
+#    pose.msg
+#)
 
 generate_messages(
     DEPENDENCIES
