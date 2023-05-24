@@ -22,12 +22,11 @@ $ roslaunch roboscan_nsl3130 camera.Launch
 
 # NSL-3130AA View
 
-
  ![aaa](https://user-images.githubusercontent.com/106071093/226831747-71e4c269-0fa9-483a-b781-78ac131eaf6b.png)
 
 # Rollover Avoidance and Correction
 
-  ![rollover](https://github.com/nano-roboscan/NSL-3130AA-ROS2/assets/106071093/264c31ff-02ad-43be-a42b-a7f1ee735172)
+  ![rollover](https://github.com/nano-roboscan/NSL-3130AA-ROS2/assets/106071093/9d9659fd-0bb4-4e68-96cd-6a180cfa9618)
 
 # Average FPS per Image type
 
