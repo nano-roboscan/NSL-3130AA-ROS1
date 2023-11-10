@@ -100,6 +100,24 @@ void Interface::setOffset(int16_t offset){
     tcpConnection.sendCommand(payload);
 }
 
+
+
+void Interface::setUdpPort(uint16_t port)
+{
+	port = udp_port;
+
+    std::vector<uint8_t> payload = {
+        0x00, 0x44,
+        static_cast<uint8_t>(port >> 8),
+        static_cast<uint8_t>(port & 0x00ff)
+    };
+
+	printf("reset UDP port = %d\n", port);
+
+    tcpConnection.sendCommand(payload);
+}
+
+
 void Interface::setMinAmplitude(uint16_t minAmplitude){
     std::vector<uint8_t> payload = {
         0x00, 0x15,

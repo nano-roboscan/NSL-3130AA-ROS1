@@ -233,6 +233,7 @@ int Convert_To_RGB24( float fValue, RGB888Pixel *nRGBData, float fMinValue, floa
 void setParameters()
 {
     interface.stopStream();    
+	interface.setUdpPort(0);
     interface.setMinAmplitude(minAmplitude);
     interface.setIntegrationTime(int0, int1, int2, intGr);
         

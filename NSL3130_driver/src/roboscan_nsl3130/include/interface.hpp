@@ -25,6 +25,7 @@ public:
   void streamDistanceGrayscale();
   void streamDistanceAmplitudeGrayscale();
   void setOffset(int16_t offset);
+  void setUdpPort(uint16_t port);
   void setMinAmplitude(uint16_t minAmplitude);
   void setBinning(const bool vertical, const bool horizontal);
   void setRoi(const uint16_t x0, const uint16_t y0, const uint16_t x1, const uint16_t y1);
@@ -69,6 +70,7 @@ private:
   const static uint16_t COMMAND_SET_CAMERA_IP_SETTINGS = 40;
   const static uint16_t COMMAND_GET_CAMERA_IP_ADDRESS = 48;
   const static uint16_t COMMAND_GET_TEMPERATURE = 52;
+  const static uint16_t COMMAND_SET_UDP_PORT = 68;
 
   Packet data;
   std::shared_ptr<Frame> currentFrame;
