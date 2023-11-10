@@ -108,6 +108,7 @@ void Interface::setUdpPort(uint16_t port)
 
     std::vector<uint8_t> payload = {
         0x00, 0x44,
+		0x00, 0x00,
         static_cast<uint8_t>(port >> 8),
         static_cast<uint8_t>(port & 0x00ff)
     };
