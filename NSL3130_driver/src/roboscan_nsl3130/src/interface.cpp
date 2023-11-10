@@ -5,8 +5,10 @@
 
 namespace nanosys {
 
+int udp_port = 45454;
+
 Interface::Interface() : tcpConnection(ioService),
-    udpServer(ioService),
+    udpServer(ioService, udp_port),
     isStreaming(false),
     dataType(0),
     currentFrame_id(0),

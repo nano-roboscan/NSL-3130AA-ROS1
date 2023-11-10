@@ -15,10 +15,11 @@ namespace nanosys {
       static const int RECV_BUFF_SIZE = 2048;
 
     public:
-      UdpServer(boost::asio::io_service &);
+      UdpServer(boost::asio::io_service &, int);
       ~UdpServer();
 
       boost::signals2::connection subscribe(std::function<void(Packet &)>);
+	  void initUdpServer(boost::asio::io_service& ios, int port);
 
     private:
       udp::socket socket;

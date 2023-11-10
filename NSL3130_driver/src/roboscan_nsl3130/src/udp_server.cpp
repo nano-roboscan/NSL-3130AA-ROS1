@@ -7,9 +7,12 @@ using namespace std;
 
 namespace nanosys {
 
-UdpServer::UdpServer(boost::asio::io_service& ios) :
-  socket(ios, udp::endpoint(udp::v4(), PORT)),
+UdpServer::UdpServer(boost::asio::io_service& ios, int port) :
+  socket(ios, udp::endpoint(udp::v4(), port)),
   recvBuffer(Packet(RECV_BUFF_SIZE)) {
+
+	printf("udp port %d -> %d\n", PORT, port);
+  
   startReceive();  
 }
 
