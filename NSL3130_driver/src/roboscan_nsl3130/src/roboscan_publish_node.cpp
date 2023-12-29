@@ -233,7 +233,7 @@ int Convert_To_RGB24( float fValue, RGB888Pixel *nRGBData, float fMinValue, floa
 void setParameters()
 {
     interface.stopStream();    
-	interface.setUdpPort(0);
+//	interface.setUdpPort(0);
     interface.setMinAmplitude(minAmplitude);
     interface.setIntegrationTime(int0, int1, int2, intGr);
         
@@ -421,7 +421,7 @@ void updateCameraInfo(std::shared_ptr<CameraInfo> ci)
 
 void updateFrame(std::shared_ptr<Frame> frame)
 {
-    int x, y, k, l;
+    int x, y, k, l, pc;
     cv::Mat imageLidar(height, width, CV_8UC3, Scalar(255, 255, 255));
 
     if(frame->dataType == Frame::DISTANCE || frame->dataType == Frame::AMPLITUDE || frame->dataType == Frame::DISTANCE_AND_GRAYSCALE || frame->dataType == Frame::DISTANCE_AMPLITUDE_GRAYSCALE ){
@@ -513,7 +513,7 @@ void updateFrame(std::shared_ptr<Frame> frame)
 
 
         for(k=0, l=0, y=0; y< frame->height; y++){
-            for(x=0; x< frame->width; x++, k++, l+=2){
+            for(x=0, pc = frame->width-1; x< frame->width; x++, k++, l+=2, pc--){
                 pcl::PointXYZI &p = cloud->points[k];
                 distance = (frame->distData[l+1] << 8) + frame->distData[l];
 
@@ -549,7 +549,7 @@ void updateFrame(std::shared_ptr<Frame> frame)
                     && y < -x + cutPixels + (239-cutPixels) + (319-cutPixels))
                 {
                     if(cartesian){
-                        cartesianTransform.transformPixel(x, y, distance, px, py, pz, transformAngle);
+                        cartesianTransform.transformPixel(pc, y, distance, px, py, pz, transformAngle);
                         p.x = static_cast<float>(pz / 1000.0); //mm -> m
                         p.y = static_cast<float>(px / 1000.0);
                         p.z = static_cast<float>(-py / 1000.0);
@@ -559,7 +559,7 @@ void updateFrame(std::shared_ptr<Frame> frame)
 
                     }else{
                         p.x = distance / 1000.0;
-                        p.y = -(160-x) / 100.0;
+                        p.y = -(160-pc) / 100.0;
                         p.z = (120-y) / 100.0;
                         if(frame->dataType == Frame::AMPLITUDE) p.intensity =  static_cast<float>(amplitude);
                         else p.intensity = static_cast<float>(distance / 1000.0);

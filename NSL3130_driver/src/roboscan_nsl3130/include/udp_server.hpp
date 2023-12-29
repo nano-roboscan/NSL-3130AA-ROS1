@@ -19,7 +19,6 @@ namespace nanosys {
       ~UdpServer();
 
       boost::signals2::connection subscribe(std::function<void(Packet &)>);
-	  void initUdpServer(boost::asio::io_service& ios, int port);
 
     private:
       udp::socket socket;
