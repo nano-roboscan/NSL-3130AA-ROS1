@@ -37,6 +37,7 @@ public:
 
   void setGrayscaleIlluminationMode(uint8_t mode);
   void setAdcOverflowSaturation(int8_t bAdcOverflow, int8_t bSaturation);
+  void setDualBeam(uint8_t mode, bool usedDualbeamDist);
 
   boost::signals2::connection subscribeFrame(std::function<void (std::shared_ptr<Frame>)>);
   boost::signals2::connection subscribeCameraInfo(std::function<void (std::shared_ptr<CameraInfo>)>);
@@ -70,6 +71,7 @@ private:
   const static uint16_t COMMAND_SET_CAMERA_IP_SETTINGS = 40;
   const static uint16_t COMMAND_GET_CAMERA_IP_ADDRESS = 48;
   const static uint16_t COMMAND_GET_TEMPERATURE = 52;
+  const static uint16_t COMMAND_SET_DUALBEAM_MODE = 62;
   const static uint16_t COMMAND_SET_UDP_PORT = 68;
 
   Packet data;

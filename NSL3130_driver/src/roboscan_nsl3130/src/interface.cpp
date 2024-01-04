@@ -66,7 +66,7 @@ void Interface::streamDCS()
 }
 
 void Interface::streamDistanceAmplitude() {
-    setDataType(Frame::AMPLITUDE);
+    setDataType(Frame::DISTANCE_AMPLITUDE);
     streamMeasurement(COMMAND_GET_DIST_AND_AMP);
 }
 
@@ -81,7 +81,7 @@ void Interface::streamGrayscale() {
 }
 
 void Interface::streamDistanceGrayscale() {
-    setDataType(Frame::DISTANCE_AND_GRAYSCALE);
+    setDataType(Frame::DISTANCE_GRAYSCALE);
     streamMeasurement(COMMAND_GET_DIST_AND_GRY);
 }
 
@@ -100,20 +100,39 @@ void Interface::setOffset(int16_t offset){
     tcpConnection.sendCommand(payload);
 }
 
+/*
+	mode::
+	0 : ¹Ì»ç¿ë 
+	1 : 6Mhz roll-over
+	2 : 3Mhz roll-over
+*/
+void Interface::setDualBeam(uint8_t mode, bool usedDualbeamDist)
+{
+    std::vector<uint8_t> payload;
+    uint16_t command = COMMAND_SET_DUALBEAM_MODE;
+	
+	uint8_t usedDualBeamDistance = usedDualbeamDist ? 1 : 0;
+	//Insert the 16Bit command
+    insertValue(payload, command);
+
+    payload.push_back(mode);
+    payload.push_back(usedDualBeamDistance);
+
+    tcpConnection.sendCommand(payload);
+}
+
 
 
 void Interface::setUdpPort(uint16_t port)
 {
-	port = udp_port;
-
     std::vector<uint8_t> payload = {
         0x00, 0x44,
 		0x00, 0x00,
-        static_cast<uint8_t>(port >> 8),
-        static_cast<uint8_t>(port & 0x00ff)
+        static_cast<uint8_t>(udp_port >> 8),
+        static_cast<uint8_t>(udp_port & 0x00ff)
     };
 
-	printf("reset UDP port = %d\n", port);
+	printf("reset UDP port = %d\n", udp_port);
 
     tcpConnection.sendCommand(payload);
 }

@@ -21,7 +21,15 @@
 #include <image_transport/image_transport.h>
 #include <sensor_msgs/image_encodings.h>
 
+using namespace nanosys;
+using namespace cv;
 
+#define WIN_NAME "NSL-3130AA IMAGE"
+#define MAX_LEVELS  	9
+#define NUM_COLORS     	30000
+
+
+#define PIXEL_VALID_DATA  	64000
 #define LOW_AMPLITUDE       64001
 #define ADC_OVERFLOW        64002
 #define SATURATION          64003
@@ -29,9 +37,15 @@
 #define INTERFERENCE        64007
 #define EDGE_FILTERED       64008
 
+#define LEFTX_MAX	124	
+#define RIGHTX_MIN	131
+#define RIGHTX_MAX	319	
+#define X_INTERVAL	4
 
-using namespace nanosys;
-using namespace cv;
+#define LEFTY_MAX	116	
+#define RIGHTY_MIN	123
+#define RIGHTY_MAX	239	
+#define Y_INTERVAL	2
 
 int imageType = 2; //image and aquisition type: 0 - grayscale, 1 - distance, 2 - distance_amplitude
 int lensType = 1;  //0- wide field, 1- standard field, 2 - narrow field
@@ -58,6 +72,9 @@ int lensCenterOffsetY = 0;
 int old_lensCenterOffsetX = 0;
 int old_lensCenterOffsetY = 0;
 
+int dual_beam = 0;
+bool used_dual_beam_distance = true;
+
 int roi_leftX = 0;
 int roi_topY = 0;
 int roi_rightX = 319;
@@ -77,7 +94,10 @@ double transformAngle = 0;
 int cutPixels = 0;
 bool cvShow = false;
 float maxDistance;
-
+int mouseXpos = 0;
+int mouseYpos = 0;
+char winName[100];
+std::vector<cv::Vec3b> colorVector;
 
 uint32_t frameSeq;
 boost::signals2::connection connectionFrames;
@@ -106,6 +126,125 @@ typedef struct _RGB888Pixel
     unsigned char g;
     unsigned char b;
 } RGB888Pixel;
+
+double interpolate( double x, double x0, double y0, double x1, double y1){
+
+    if( x1 == x0 ){
+        return y0;
+    } else {
+        return ((x-x0)*(y1-y0)/(x1-x0) + y0);
+    }
+
+}
+
+void createColorMapPixel(int numSteps, int indx, unsigned char &red, unsigned char &green, unsigned char &blue)
+{
+    double k = 1;
+    double BIT0 = -0.125 * k - 0.25;
+    double BIT1 = BIT0 + 0.25 * k;
+    double BIT2 = BIT1 + 0.25 * k;
+    double BIT3 = BIT2 + 0.25 * k;
+
+    double G0 = BIT1;
+    double G1 = G0 + 0.25 * k;
+    double G2 = G1 + 0.25 * k;
+    double G3 = G2 + 0.25 * k + 0.125;
+
+    double R0 = BIT2;
+    double R1 = R0 + 0.25 * k;
+    double R2 = R1 + 0.25 * k;
+    double R3 = R2 + 0.25 * k + 0.25;
+
+    double i = (double)indx/(double)numSteps - 0.25 * k;
+
+    if( i>= R0 && i < R1 ){
+        red = interpolate(i, R0, 0, R1, 255);
+    } else if((i >= R1) && (i < R2)){
+        red = 255;
+    } else if((i >= R2) && (i < R3)) {
+        red = interpolate(i, R2, 255, R3, 0);
+    } else {
+        red = 0;
+    }
+
+    if( i>= G0 && i < G1 ){
+        green = interpolate(i, G0, 0, G1, 255);
+    } else if((i>=G1)&&(i<G2)){
+        green = 255;
+    } else if((i >= G2)&&(i < G3)){
+        green = interpolate(i, G2, 255, G3, 0);
+    } else {
+        green = 0;
+    }
+
+
+    if( i>= BIT0 && i < BIT1 ){
+        blue = interpolate(i, BIT0, 0, BIT1, 255);
+    } else if((i >= BIT1)&&(i < BIT2)){
+        blue = 255;
+    } else if((i >= BIT2)&&(i < BIT3)) {
+        blue = interpolate(i, BIT2, 255, BIT3, 0);
+    } else{
+        blue = 0;
+    }
+
+}
+
+
+static void callback_mouse_click(int event, int x, int y, int flags, void* user_data)
+{
+	std::ignore = flags;
+	std::ignore = user_data;
+	
+	if (event == cv::EVENT_LBUTTONDOWN)
+	{
+		mouseXpos = x;
+		mouseYpos = y;
+	}
+	else if (event == cv::EVENT_LBUTTONUP)
+	{
+	}
+	else if (event == cv::EVENT_MOUSEMOVE)
+	{
+	}
+}
+
+void setWinName(bool configCvShow)
+{
+	bool changedCvShow = cvShow != configCvShow ? true : false;	
+	cvShow = configCvShow;
+
+	printf("cvShow = %d/%d\n", configCvShow, changedCvShow);
+
+	if( changedCvShow ){
+		cv::destroyAllWindows();
+	}
+	
+	if( configCvShow == false || changedCvShow == false ) return;
+
+	if( imageType == Frame::GRAYSCALE ){
+		sprintf(winName,"%s(Gray)", WIN_NAME);
+	}
+	else if( imageType == Frame::DISTANCE ){
+		sprintf(winName,"%s(Dist)", WIN_NAME);
+	}
+	else if( imageType == Frame::DISTANCE_AMPLITUDE ){
+		sprintf(winName,"%s(Dist/Ampl)", WIN_NAME);
+	}
+	else if( imageType == Frame::DCS ){
+		sprintf(winName,"%s(DCS)", WIN_NAME);
+	}
+	else if( imageType == Frame::DISTANCE_GRAYSCALE ){
+		sprintf(winName,"%s(Dist/Gray)", WIN_NAME);
+	}
+	else if( imageType == Frame::DISTANCE_AMPLITUDE_GRAYSCALE ){
+		sprintf(winName,"%s(Dist/Ampl/Gray)", WIN_NAME);
+	}
+
+	cv::namedWindow(winName, cv::WINDOW_AUTOSIZE);
+	//cv::setWindowProperty(winName, cv::WND_PROP_TOPMOST, 1);	
+	cv::setMouseCallback(winName, callback_mouse_click, NULL);
+}
 
 
 int Convert_To_RGB24( float fValue, RGB888Pixel *nRGBData, float fMinValue, float fMaxValue)
@@ -236,14 +375,13 @@ void setParameters()
 //	interface.setUdpPort(0);
     interface.setMinAmplitude(minAmplitude);
     interface.setIntegrationTime(int0, int1, int2, intGr);
-        
+
     interface.setHDRMode((uint8_t)hdr_mode);
     interface.setFilter(medianFilter, averageFilter, static_cast<uint16_t>(temporalFilterFactor * 1000), temporalFilterThreshold, edgeThreshold,
                         temporalEdgeThresholdLow, temporalEdgeThresholdHigh, interferenceDetectionLimit, useLastValue);
 
     interface.setAdcOverflowSaturation(bAdcOverflow, bSaturation);
     interface.setGrayscaleIlluminationMode(grayscaleIlluminationMode);
-    
 
     uint8_t modIndex;
     if(frequencyModulation == 0) modIndex = 1;
@@ -251,16 +389,16 @@ void setParameters()
     else if(frequencyModulation == 2)  modIndex = 2;
     else    modIndex = 3;
 
-    maxDistance = frequencyModulation == 0 ? 6500.0f : frequencyModulation == 1 ? 12500.0f : frequencyModulation == 2 ? 25000.0f : 50000.0f;
+    //maxDistance = frequencyModulation == 0 ? 6500.0f : frequencyModulation == 1 ? 12500.0f : frequencyModulation == 2 ? 25000.0f : 50000.0f;
     interface.setModulation(modIndex, channel);
-
     interface.setRoi(roi_leftX, roi_topY, roi_rightX, roi_bottomY);
+	interface.setDualBeam(dual_beam, used_dual_beam_distance);
 
     if(startStream){
 
         if(imageType == Frame::GRAYSCALE) interface.streamGrayscale();
         else if(imageType == Frame::DISTANCE) interface.streamDistance();
-        else if(imageType == Frame::AMPLITUDE) interface.streamDistanceAmplitude();
+        else if(imageType == Frame::DISTANCE_AMPLITUDE) interface.streamDistanceAmplitude();
         else if(imageType == Frame::DCS) interface.streamDCS();
         else interface.streamDistanceGrayscale();
 
@@ -334,30 +472,65 @@ void updateConfig(roboscan_nsl3130::roboscan_nsl3130Config &config, uint32_t lev
 
     transformAngle = config.transform_angle;
     cutPixels = config.cut_pixels;
-    
+	maxDistance = config.max_distance;
+
+	dual_beam = config.dual_beam;
+	used_dual_beam_distance = config.dual_beam_dist;
+
+	setWinName(config.cvShow);
 
     //add
     grayscaleIlluminationMode = 1;
     bAdcOverflow = 1;
     bSaturation = 1;
 
-    
 
-    roi_leftX   = config.roi_left_x;
-    roi_rightX  = config.roi_right_x;
+	if( config.roi_left_x != roi_leftX ){
+		int x1_tmp = config.roi_left_x;
 
-    if(roi_rightX - roi_leftX < 7)
-        roi_rightX = roi_leftX + 7;
+		if(x1_tmp % X_INTERVAL ) x1_tmp+=X_INTERVAL-(x1_tmp % X_INTERVAL );
+		if(x1_tmp > LEFTX_MAX ) x1_tmp = LEFTX_MAX;
 
-    roi_rightX -= (roi_rightX - roi_leftX + 1) % 4;
-    config.roi_right_x = roi_rightX;
+		config.roi_left_x = roi_leftX = x1_tmp;
+	}
+	
+	if( config.roi_right_x != roi_rightX ){
+		int x2_tmp = config.roi_right_x;
+		
+		if((x2_tmp-RIGHTX_MIN) % X_INTERVAL)	x2_tmp-=((x2_tmp-RIGHTX_MIN) % X_INTERVAL);
+		if(x2_tmp < RIGHTX_MIN ) x2_tmp = RIGHTX_MIN;
+		if(x2_tmp > RIGHTX_MAX ) x2_tmp = RIGHTX_MAX;
 
-    config.roi_height -= config.roi_height % 4;
-    if(config.roi_height < 8) config.roi_height = 8;
+		config.roi_right_x = roi_rightX = x2_tmp;
+	}
 
-    roi_topY    = 120 - config.roi_height/2;
-    roi_bottomY = 119 + config.roi_height/2;
+	if( config.roi_left_y != roi_topY ){
+	    int y1_tmp = config.roi_left_y;
 
+	    if(y1_tmp % Y_INTERVAL )	y1_tmp++;
+	    if(y1_tmp > LEFTY_MAX ) y1_tmp = LEFTY_MAX;
+
+		config.roi_left_y = roi_topY = y1_tmp;
+
+		int y2_tmp = RIGHTY_MAX - y1_tmp;
+		config.roi_right_y = roi_bottomY = y2_tmp;
+	}
+
+	if( config.roi_right_y != roi_bottomY ){
+	    int y2_tmp = config.roi_right_y;
+
+		if(y2_tmp % Y_INTERVAL == 0 )	y2_tmp++;
+		if(y2_tmp < RIGHTY_MIN ) y2_tmp = RIGHTY_MIN;
+		if(y2_tmp > RIGHTY_MAX ) y2_tmp = RIGHTY_MAX;
+
+		config.roi_right_y = roi_bottomY = y2_tmp;
+
+	    int y1_tmp = RIGHTY_MAX - y2_tmp;
+		config.roi_left_y = roi_topY = y1_tmp;
+	}
+  
+
+	//printf("x = %d y = %d width = %d height = %d\n", roi_leftX, roi_topY, roi_rightX, roi_bottomY);
 
     setParameters();
 }
@@ -387,11 +560,11 @@ void startStreaming()
         interface.streamDistance();
         ROS_INFO("streaming distance");
         break;
-    case Frame::AMPLITUDE:
+    case Frame::DISTANCE_AMPLITUDE:
         interface.streamDistanceAmplitude();
         ROS_INFO("streaming distance-amplitude");
         break;
-    case Frame::DISTANCE_AND_GRAYSCALE:
+    case Frame::DISTANCE_GRAYSCALE:
         interface.streamDistanceGrayscale();
         ROS_INFO("streaming distance-grayscale");
         break;
@@ -419,12 +592,231 @@ void updateCameraInfo(std::shared_ptr<CameraInfo> ci)
     cameraInfo.roi.height = ci->roiY1 - ci->roiY0;
 }
 
+
+cv::Mat addDistanceInfo(cv::Mat distMat, std::shared_ptr<Frame> frame)
+{
+	int xpos = mouseXpos;
+	int ypos = mouseYpos;
+	
+	if( (ypos > 0 && ypos < frame->height)){
+		// mouseXpos, mouseYpos
+		cv::Mat infoImage(50, distMat.cols, CV_8UC3, Scalar(255, 255, 255));
+
+		cv::line(distMat, cv::Point(xpos-10, ypos), cv::Point(xpos+10, ypos), cv::Scalar(255, 255, 0), 2);
+		cv::line(distMat, cv::Point(xpos, ypos-10), cv::Point(xpos, ypos+10), cv::Scalar(255, 255, 0), 2);
+
+		if( xpos >= frame->width*2 ){
+			xpos -= frame->width*2;
+		}
+		else if( xpos >= frame->width ){
+			xpos -= frame->width;
+		}
+
+		std::string dist_caption;
+
+		int real_xpos = xpos;
+		int real_dist = frame->dist2BData[ypos*frame->width + real_xpos];
+		if( real_dist > PIXEL_VALID_DATA ){
+
+			if( real_dist == ADC_OVERFLOW )
+				dist_caption = cv::format("X:%d,Y:%d ADC_OVERFLOW", xpos, ypos);
+			else if( real_dist == SATURATION )
+				dist_caption = cv::format("X:%d,Y:%d SATURATION", xpos, ypos);
+			else if( real_dist == BAD_PIXEL )
+				dist_caption = cv::format("X:%d,Y:%d BAD_PIXEL", xpos, ypos);
+			else if( real_dist == INTERFERENCE )
+				dist_caption = cv::format("X:%d,Y:%d INTERFERENCE", xpos, ypos);
+			else if( real_dist == EDGE_FILTERED )
+				dist_caption = cv::format("X:%d,Y:%d EDGE_FILTERED", xpos, ypos);
+			else
+				dist_caption = cv::format("X:%d,Y:%d LOW_AMPLITUDE", xpos, ypos);
+		}
+		else{
+			if( frame->dataType == Frame::DISTANCE_AMPLITUDE ) dist_caption = cv::format("X:%d,Y:%d %dmm/%dlsb", xpos, ypos, frame->dist2BData[ypos*frame->width + real_xpos], frame->ampl2BData[ypos*frame->width + real_xpos]);
+			else if( frame->dataType == Frame::DISTANCE_GRAYSCALE ) dist_caption = cv::format("X:%d,Y:%d %dmm/%dlsb", xpos, ypos, frame->dist2BData[ypos*frame->width + real_xpos], frame->gray2BData[ypos*frame->width + real_xpos]);
+			else if( frame->dataType == Frame::DISTANCE_AMPLITUDE_GRAYSCALE ) dist_caption = cv::format("X:%d,Y:%d %dmm/%dlsb/%dlsb", xpos, ypos, frame->dist2BData[ypos*frame->width + real_xpos], frame->ampl2BData[ypos*frame->width + real_xpos], frame->gray2BData[ypos*frame->width + real_xpos]);
+			else if( frame->dataType == Frame::GRAYSCALE )	dist_caption = cv::format("X:%d,Y:%d %dlsb", xpos, ypos, frame->gray2BData[ypos*frame->width + real_xpos]);
+			else	dist_caption = cv::format("X:%d,Y:%d %dmm", xpos, ypos, frame->dist2BData[ypos*frame->width + real_xpos]);
+		}
+
+		putText(infoImage, dist_caption.c_str(), cv::Point(10, 30), cv::FONT_HERSHEY_COMPLEX, 1, cv::Scalar(0, 0, 0));
+		cv::vconcat(distMat, infoImage, distMat);
+	}
+	else{
+		cv::Mat infoImage(50, distMat.cols, CV_8UC3, Scalar(255, 255, 255));
+		cv::vconcat(distMat, infoImage, distMat);
+	}
+
+	return distMat;
+}
+
+cv::Mat addDCSInfo(cv::Mat distMat, std::shared_ptr<Frame> frame)
+{
+	int xpos = mouseXpos;
+	int ypos = mouseYpos;
+	
+	if( (ypos > 0 && ypos < frame->height*2)){
+		// mouseXpos, mouseYpos
+		cv::Mat infoImage(50, distMat.cols, CV_8UC3, Scalar(255, 255, 255));
+
+		cv::line(distMat, cv::Point(xpos-10, ypos), cv::Point(xpos+10, ypos), cv::Scalar(255, 255, 0), 2);
+		cv::line(distMat, cv::Point(xpos, ypos-10), cv::Point(xpos, ypos+10), cv::Scalar(255, 255, 0), 2);
+
+		if( xpos >= frame->width ){
+			xpos -= frame->width;
+		}
+
+		if( ypos >= frame->height ){
+			ypos -= frame->height;
+		}
+
+		std::string dist_caption;
+
+		int real_xpos = xpos;
+		int real_dist = frame->dcs2BData[ypos*frame->width + real_xpos];
+		if( real_dist > PIXEL_VALID_DATA ){
+
+			if( real_dist == ADC_OVERFLOW )
+				dist_caption = cv::format("X:%d,Y:%d ADC_OVERFLOW", xpos, ypos);
+			else if( real_dist == SATURATION )
+				dist_caption = cv::format("X:%d,Y:%d SATURATION", xpos, ypos);
+			else if( real_dist == BAD_PIXEL )
+				dist_caption = cv::format("X:%d,Y:%d BAD_PIXEL", xpos, ypos);
+			else if( real_dist == INTERFERENCE )
+				dist_caption = cv::format("X:%d,Y:%d INTERFERENCE", xpos, ypos);
+			else if( real_dist == EDGE_FILTERED )
+				dist_caption = cv::format("X:%d,Y:%d EDGE_FILTERED", xpos, ypos);
+			else
+				dist_caption = cv::format("X:%d,Y:%d LOW_AMPLITUDE", xpos, ypos);
+		}
+		else{
+			dist_caption = cv::format("X:%d,Y:%d %d/%d/%d/%d", xpos, ypos
+										, frame->dcs2BData[ypos*frame->width + real_xpos]
+										, frame->dcs2BData[(frame->width*frame->height) + ypos*frame->width + real_xpos]
+										, frame->dcs2BData[(frame->width*frame->height * 2) + ypos*frame->width + real_xpos]
+										, frame->dcs2BData[(frame->width*frame->height * 3) + ypos*frame->width + real_xpos]);
+		}
+
+		putText(infoImage, dist_caption.c_str(), cv::Point(10, 30), cv::FONT_HERSHEY_COMPLEX, 1, cv::Scalar(0, 0, 0));
+		cv::vconcat(distMat, infoImage, distMat);
+	}
+	else{
+		cv::Mat infoImage(50, distMat.cols, CV_8UC3, Scalar(255, 255, 255));
+		cv::vconcat(distMat, infoImage, distMat);
+	}
+
+	return distMat;
+}
+
+void setAmplitudeColor(cv::Mat &imageLidar, int x, int y, int value, double end_range )
+{
+	if( value == LOW_AMPLITUDE )
+	{
+		imageLidar.at<Vec3b>(y, x)[0] = 0;
+		imageLidar.at<Vec3b>(y, x)[1] = 0;
+		imageLidar.at<Vec3b>(y, x)[2] = 0; 
+	}
+	else if (value == SATURATION)
+	{
+		imageLidar.at<Vec3b>(y, x)[0] = 128;
+		imageLidar.at<Vec3b>(y, x)[1] = 0;
+		imageLidar.at<Vec3b>(y, x)[2] = 255; 
+	}
+	else if (value == ADC_OVERFLOW)
+	{
+		imageLidar.at<Vec3b>(y, x)[0] = 255;
+		imageLidar.at<Vec3b>(y, x)[1] = 14;
+		imageLidar.at<Vec3b>(y, x)[2] = 169; 
+	}
+	else if(value == BAD_PIXEL)
+	{
+		imageLidar.at<Vec3b>(y, x)[0] = 0;
+		imageLidar.at<Vec3b>(y, x)[1] = 0;
+		imageLidar.at<Vec3b>(y, x)[2] = 0; 
+	}
+	else if(value == 0)
+	{
+		imageLidar.at<Vec3b>(y, x) = colorVector.at(0);
+	}
+	else if (value < 0)
+	{
+		imageLidar.at<Vec3b>(y, x)[0] = 0;
+		imageLidar.at<Vec3b>(y, x)[1] = 0;
+		imageLidar.at<Vec3b>(y, x)[2] = 0; 
+	}
+	else if (value > end_range)
+	{
+		imageLidar.at<Vec3b>(y, x)[0] = 0;
+		imageLidar.at<Vec3b>(y, x)[1] = 0;
+		imageLidar.at<Vec3b>(y, x)[2] = 0; 
+	}
+	else{
+		int index = value * (NUM_COLORS / end_range);
+		if( index < 0 ){
+			printf("error index = %d\n", index);
+			index = 0;
+		}
+		else if( index >= (int)colorVector.size() ){
+			index = colorVector.size()-1;
+		}
+		
+		imageLidar.at<Vec3b>(y, x) = colorVector.at(index);
+	}
+
+}
+
+
+void setGrayscaleColor(cv::Mat &imageLidar, int x, int y, int value, double end_range )
+{   
+	if (value == SATURATION)
+	{
+		imageLidar.at<Vec3b>(y, x)[0] = 128;
+		imageLidar.at<Vec3b>(y, x)[1] = 0;
+		imageLidar.at<Vec3b>(y, x)[2] = 255; 
+	}
+	else if (value == ADC_OVERFLOW)
+	{
+		imageLidar.at<Vec3b>(y, x)[0] = 255;
+		imageLidar.at<Vec3b>(y, x)[1] = 14;
+		imageLidar.at<Vec3b>(y, x)[2] = 169; 
+	}
+	else if (value > end_range)
+	{
+		imageLidar.at<Vec3b>(y, x)[0] = 255;
+		imageLidar.at<Vec3b>(y, x)[1] = 255;
+		imageLidar.at<Vec3b>(y, x)[2] = 255; 
+	}
+	else if (value < 0)
+	{
+		imageLidar.at<Vec3b>(y, x)[0] = 0;
+		imageLidar.at<Vec3b>(y, x)[1] = 0;
+		imageLidar.at<Vec3b>(y, x)[2] = 0; 
+	}
+	else
+	{
+		int color = value * (255/end_range);
+
+		//printf("color index = %d\n", color);
+
+		imageLidar.at<Vec3b>(y, x)[0] = color;
+		imageLidar.at<Vec3b>(y, x)[1] = color;
+		imageLidar.at<Vec3b>(y, x)[2] = color; 
+	}
+}
+
+
+
+
 void updateFrame(std::shared_ptr<Frame> frame)
 {
     int x, y, k, l, pc;
-    cv::Mat imageLidar(height, width, CV_8UC3, Scalar(255, 255, 255));
+    //cv::Mat imageLidar(height, width, CV_8UC3, Scalar(255, 255, 255));
+	cv::Mat dcs1(frame->height, frame->width, CV_8UC3, Scalar(255, 255, 255));	// distance
+	cv::Mat dcs2(frame->height, frame->width, CV_8UC3, Scalar(255, 255, 255));	// amplitude
+	cv::Mat dcs3(frame->height, frame->width, CV_8UC3, Scalar(255, 255, 255));	// garycale
+	cv::Mat dcs4(frame->height, frame->width, CV_8UC3, Scalar(255, 255, 255));
 
-    if(frame->dataType == Frame::DISTANCE || frame->dataType == Frame::AMPLITUDE || frame->dataType == Frame::DISTANCE_AND_GRAYSCALE || frame->dataType == Frame::DISTANCE_AMPLITUDE_GRAYSCALE ){
+    if(frame->dataType == Frame::DISTANCE || frame->dataType == Frame::DISTANCE_AMPLITUDE || frame->dataType == Frame::DISTANCE_GRAYSCALE || frame->dataType == Frame::DISTANCE_AMPLITUDE_GRAYSCALE ){
         sensor_msgs::Image imgDistance;
         imgDistance.header.seq = frameSeq++;
         imgDistance.header.stamp = ros::Time::now();
@@ -438,7 +830,7 @@ void updateFrame(std::shared_ptr<Frame> frame)
         distanceImagePublisher.publish(imgDistance);
     }
 
-    if(frame->dataType == Frame::AMPLITUDE || frame->dataType == Frame::DISTANCE_AND_GRAYSCALE || frame->dataType == Frame::DISTANCE_AMPLITUDE_GRAYSCALE){
+    if(frame->dataType == Frame::DISTANCE_AMPLITUDE || frame->dataType == Frame::DISTANCE_GRAYSCALE || frame->dataType == Frame::DISTANCE_AMPLITUDE_GRAYSCALE){
         sensor_msgs::Image imgAmpl;
         imgAmpl.header.seq = frameSeq;
         imgAmpl.header.stamp = ros::Time::now();
@@ -485,7 +877,7 @@ void updateFrame(std::shared_ptr<Frame> frame)
       for(k=0, l=0, y=0; y< frame->height; y++){
         for(x=0; x< frame->width; x++, k++, l+=2){
           gray = (frame->amplData[l+1] << 8)  + frame->amplData[l];
-          getGrayscaleColor(imageLidar, x, y, gray, 255);
+          getGrayscaleColor(dcs1, x, y, gray, 255);
 
         }
       }
@@ -506,47 +898,49 @@ void updateFrame(std::shared_ptr<Frame> frame)
 
         uint16_t distance = 0;
         uint16_t amplitude = 0;
+		uint16_t grayscale = 0;
         double px, py, pz;
 
         RGB888Pixel* pTex = new RGB888Pixel[1];
-        
-
 
         for(k=0, l=0, y=0; y< frame->height; y++){
             for(x=0, pc = frame->width-1; x< frame->width; x++, k++, l+=2, pc--){
                 pcl::PointXYZI &p = cloud->points[k];
                 distance = (frame->distData[l+1] << 8) + frame->distData[l];
-
-                if(frame->dataType == Frame::AMPLITUDE)
-                    amplitude = (frame->amplData[l+1] << 8)  + frame->amplData[l];
+                amplitude = (frame->amplData[l+1] << 8)  + frame->amplData[l];
+				grayscale = (frame->grayData[l+1] << 8)  + frame->grayData[l];
 
                 //distance 
-                if(distance == LOW_AMPLITUDE || distance == INTERFERENCE || distance == EDGE_FILTERED)
+                if(distance == LOW_AMPLITUDE || distance == INTERFERENCE || distance == EDGE_FILTERED){
+                    distance = 0;              
+					amplitude = 0;
+                }
+				else if(!(y > -x + cutPixels
+	                    && y > x - (319-cutPixels)
+	                    && y < x + (239-cutPixels)
+	                    && y < -x + cutPixels + (239-cutPixels) + (319-cutPixels)))
+                {
                     distance = 0;
+					amplitude = 0;
+                }
 
                 Convert_To_RGB24((double)distance, pTex, 0.0f, 12500.0f);
-                
-                if(y > -x + cutPixels
-                    && y > x - (319-cutPixels)
-                    && y < x + (239-cutPixels)
-                    && y < -x + cutPixels + (239-cutPixels) + (319-cutPixels))
-                {
-                    imageLidar.at<Vec3b>(y, x)[0] = pTex->b;
-                    imageLidar.at<Vec3b>(y, x)[1] = pTex->g;
-                    imageLidar.at<Vec3b>(y, x)[2] = pTex->r;
-                }
-                else
-                {
-                    imageLidar.at<Vec3b>(y, x)[0] = 0;
-                    imageLidar.at<Vec3b>(y, x)[1] = 0;
-                    imageLidar.at<Vec3b>(y, x)[2] = 0;
-                }
+				dcs1.at<Vec3b>(y, x)[0] = pTex->b;
+				dcs1.at<Vec3b>(y, x)[1] = pTex->g;
+				dcs1.at<Vec3b>(y, x)[2] = pTex->r;
 
-                if (distance > 0 && distance < maxDistance
-                    && y > -x + cutPixels
-                    && y > x - (319-cutPixels)
-                    && y < x + (239-cutPixels)
-                    && y < -x + cutPixels + (239-cutPixels) + (319-cutPixels))
+				if(frame->dataType == Frame::DISTANCE_AMPLITUDE){
+					setAmplitudeColor(dcs2, x, y, amplitude, 2897);
+				}
+				else if( frame->dataType == Frame::DISTANCE_GRAYSCALE ){
+					setGrayscaleColor(dcs3, x, y, grayscale, 2048);	// 2048, 255
+				}
+				else if( frame->dataType == Frame::DISTANCE_AMPLITUDE_GRAYSCALE ){
+					setAmplitudeColor(dcs2, x, y, amplitude, 2897);	// 2048, 255
+					setGrayscaleColor(dcs3, x, y, grayscale, 2048);	// 2048, 255
+				}
+
+                if (distance > 0 && distance < maxDistance )
                 {
                     if(cartesian){
                         cartesianTransform.transformPixel(pc, y, distance, px, py, pz, transformAngle);
@@ -554,14 +948,14 @@ void updateFrame(std::shared_ptr<Frame> frame)
                         p.y = static_cast<float>(px / 1000.0);
                         p.z = static_cast<float>(-py / 1000.0);
 
-                        if(frame->dataType == Frame::AMPLITUDE) p.intensity = static_cast<float>(amplitude);
+                        if(frame->dataType == Frame::DISTANCE_AMPLITUDE) p.intensity = static_cast<float>(amplitude);
                         else p.intensity = static_cast<float>(pz / 1000.0);
 
                     }else{
                         p.x = distance / 1000.0;
                         p.y = -(160-pc) / 100.0;
                         p.z = (120-y) / 100.0;
-                        if(frame->dataType == Frame::AMPLITUDE) p.intensity =  static_cast<float>(amplitude);
+                        if(frame->dataType == Frame::DISTANCE_AMPLITUDE) p.intensity =  static_cast<float>(amplitude);
                         else p.intensity = static_cast<float>(distance / 1000.0);
                     }
                 
@@ -572,16 +966,47 @@ void updateFrame(std::shared_ptr<Frame> frame)
                 }
             }
         }
+
+		if( frame->dataType == Frame::DISTANCE ){
+			dcs1 = addDistanceInfo(dcs1, frame);
+		}
+		else if( frame->dataType == Frame::DISTANCE_AMPLITUDE ){
+			cv::hconcat(dcs1, dcs2, dcs1);
+			dcs1 = addDistanceInfo(dcs1, frame);
+		}
+		else if( frame->dataType == Frame::DISTANCE_GRAYSCALE ){
+			cv::hconcat(dcs1, dcs3, dcs1);
+			dcs1 = addDistanceInfo(dcs1, frame);
+		}
+		else if( frame->dataType == Frame::DISTANCE_AMPLITUDE_GRAYSCALE ){
+			cv::hconcat(dcs1, dcs2, dcs1);
+			cv::hconcat(dcs1, dcs3, dcs1);
+			dcs1 = addDistanceInfo(dcs1, frame);
+		}
+		else if( frame->dataType == Frame::GRAYSCALE ){
+			dcs1 = addDistanceInfo(dcs3, frame);
+		}
+		else if(frame->dataType == Frame::DCS){
+			cv::hconcat(dcs1, dcs2, dcs1);
+			cv::hconcat(dcs3, dcs4, dcs3);
+			cv::vconcat(dcs1, dcs3, dcs1);
+			dcs1 = addDCSInfo(dcs1, frame);
+		}
+		
+		if(cvShow == true)
+		{
+			imshow(winName, dcs1);
+			waitKey(1);
+		}
         
         pointCloud2Publisher.publish(cloud);
         cv_ptr->header.stamp = ros::Time::now();
         cv_ptr->header.frame_id = "roboscan_frame";
-        cv_ptr->image = imageLidar;
+        cv_ptr->image = dcs1;
         cv_ptr->encoding = "bgr8";
 
         imagePublisher.publish(cv_ptr->toImageMsg());
 
-        
         delete[] pTex;
     }
 
@@ -647,6 +1072,15 @@ void initialise()
     old_lensCenterOffsetX = lensCenterOffsetX;
     old_lensCenterOffsetY = lensCenterOffsetY;
     old_lensType = lensType;
+
+	int numSteps = NUM_COLORS;
+	unsigned char red, green, blue;
+
+	for(int i=0;  i< numSteps; i++)
+	{
+	  createColorMapPixel(numSteps, i, red, green, blue);
+	  colorVector.push_back(Vec3b(blue, green, red));
+	}
 
     ROS_INFO("roboscan_nsl3130 node");
 }

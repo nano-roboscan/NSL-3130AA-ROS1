@@ -10,7 +10,7 @@ namespace nanosys {
 
     struct Frame
     {
-        enum DataType { GRAYSCALE, DISTANCE, AMPLITUDE, DCS, DISTANCE_AND_GRAYSCALE, DISTANCE_AMPLITUDE_GRAYSCALE };
+        enum DataType { GRAYSCALE, DISTANCE, DISTANCE_AMPLITUDE, DCS, DISTANCE_GRAYSCALE, DISTANCE_AMPLITUDE_GRAYSCALE };
 
         static const int UDP_HEADER_OFFSET = 20;
 
@@ -27,6 +27,10 @@ namespace nanosys {
         std::vector<uint8_t> dcsData;
         std::vector<uint8_t> DistGrayData;
 
+        std::vector<uint16_t> dist2BData;
+        std::vector<uint16_t> ampl2BData;
+        std::vector<uint16_t> gray2BData;
+        std::vector<uint16_t> dcs2BData;
 
         Frame(uint16_t, uint64_t, uint16_t, uint16_t, uint16_t);
         void sortData(const Packet&);
