@@ -816,7 +816,7 @@ void updateFrame(std::shared_ptr<Frame> frame)
 	cv::Mat dcs3(frame->height, frame->width, CV_8UC3, Scalar(255, 255, 255));	// garycale
 	cv::Mat dcs4(frame->height, frame->width, CV_8UC3, Scalar(255, 255, 255));
 
-	printf("width = %d, height = %d roi_topY = %d\n", frame->width, frame->height, roi_topY);
+//	printf("width = %d, height = %d roi_topY = %d\n", frame->width, frame->height, roi_topY);
 
     if(frame->dataType == Frame::DISTANCE || frame->dataType == Frame::DISTANCE_AMPLITUDE || frame->dataType == Frame::DISTANCE_GRAYSCALE || frame->dataType == Frame::DISTANCE_AMPLITUDE_GRAYSCALE ){
         sensor_msgs::Image imgDistance;
