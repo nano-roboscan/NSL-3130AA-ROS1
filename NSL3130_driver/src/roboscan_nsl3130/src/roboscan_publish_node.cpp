@@ -816,6 +816,8 @@ void updateFrame(std::shared_ptr<Frame> frame)
 	cv::Mat dcs3(frame->height, frame->width, CV_8UC3, Scalar(255, 255, 255));	// garycale
 	cv::Mat dcs4(frame->height, frame->width, CV_8UC3, Scalar(255, 255, 255));
 
+	printf("width = %d, height = %d roi_topY = %d\n", frame->width, frame->height, roi_topY);
+
     if(frame->dataType == Frame::DISTANCE || frame->dataType == Frame::DISTANCE_AMPLITUDE || frame->dataType == Frame::DISTANCE_GRAYSCALE || frame->dataType == Frame::DISTANCE_AMPLITUDE_GRAYSCALE ){
         sensor_msgs::Image imgDistance;
         imgDistance.header.seq = frameSeq++;
@@ -924,7 +926,7 @@ void updateFrame(std::shared_ptr<Frame> frame)
 					amplitude = 0;
                 }
 
-                Convert_To_RGB24((double)distance, pTex, 0.0f, 12500.0f);
+                Convert_To_RGB24((double)distance, pTex, 0.0f, maxDistance);
 				dcs1.at<Vec3b>(y, x)[0] = pTex->b;
 				dcs1.at<Vec3b>(y, x)[1] = pTex->g;
 				dcs1.at<Vec3b>(y, x)[2] = pTex->r;
@@ -933,17 +935,17 @@ void updateFrame(std::shared_ptr<Frame> frame)
 					setAmplitudeColor(dcs2, x, y, amplitude, 2897);
 				}
 				else if( frame->dataType == Frame::DISTANCE_GRAYSCALE ){
-					setGrayscaleColor(dcs3, x, y, grayscale, 2048);	// 2048, 255
+					setGrayscaleColor(dcs3, x, y, grayscale, 2048);
 				}
 				else if( frame->dataType == Frame::DISTANCE_AMPLITUDE_GRAYSCALE ){
-					setAmplitudeColor(dcs2, x, y, amplitude, 2897);	// 2048, 255
-					setGrayscaleColor(dcs3, x, y, grayscale, 2048);	// 2048, 255
+					setAmplitudeColor(dcs2, x, y, amplitude, 2897);
+					setGrayscaleColor(dcs3, x, y, grayscale, 2048);
 				}
 
                 if (distance > 0 && distance < maxDistance )
                 {
                     if(cartesian){
-                        cartesianTransform.transformPixel(pc, y, distance, px, py, pz, transformAngle);
+                        cartesianTransform.transformPixel(pc, y+roi_topY, distance, px, py, pz, transformAngle);
                         p.x = static_cast<float>(pz / 1000.0); //mm -> m
                         p.y = static_cast<float>(px / 1000.0);
                         p.z = static_cast<float>(-py / 1000.0);
