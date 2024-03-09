@@ -24,7 +24,7 @@ $ roslaunch roboscan_nsl3130 camera.Launch
 
  ![aaa](https://user-images.githubusercontent.com/106071093/226831747-71e4c269-0fa9-483a-b781-78ac131eaf6b.png)
 
-# Phase Wrapping Avoidance and Correction
+# Phase wrapping Avoidance and Correction
 
   ![phase2](https://github.com/nano-roboscan/NSL-3130AA-ROS2/assets/106071093/4a134327-213f-4558-9fa7-47de543866c9)
 
