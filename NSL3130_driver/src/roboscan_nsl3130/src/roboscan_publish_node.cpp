@@ -20,9 +20,10 @@
 #include <cv_bridge/cv_bridge.h>
 #include <image_transport/image_transport.h>
 #include <sensor_msgs/image_encodings.h>
+//#include <visualization_msgs/Marker.h>
+#include <pcl/visualization/pcl_visualizer.h>
+#include <sensor_msgs/LaserScan.h>
 
-using namespace nanosys;
-using namespace cv;
 
 #define WIN_NAME "NSL-3130AA IMAGE"
 #define MAX_LEVELS  	9
@@ -47,8 +48,13 @@ using namespace cv;
 #define RIGHTY_MAX	239	
 #define Y_INTERVAL	2
 
+#define USED_INTENSITY //else gray pointcloud
+
+using namespace nanosys;
+using namespace cv;
+
 int imageType = 2; //image and aquisition type: 0 - grayscale, 1 - distance, 2 - distance_amplitude
-int lensType = 1;  //0- wide field, 1- standard field, 2 - narrow field
+int lensType = 2;  //0- wide field, 1- standard field, 2 - narrow field
 int old_lensType;
 bool medianFilter;
 bool averageFilter;
@@ -99,6 +105,15 @@ int mouseYpos = 0;
 char winName[100];
 std::vector<cv::Vec3b> colorVector;
 
+//2D scan data
+unsigned int num_readings = 320;
+double laser_frequency = 200;
+double ranges[320];
+double intensities[320];
+
+int count = 0;      
+//
+
 uint32_t frameSeq;
 boost::signals2::connection connectionFrames;
 boost::signals2::connection connectionCameraInfo;
@@ -118,6 +133,8 @@ Interface interface;
 CartesianTransform cartesianTransform;
 sensor_msgs::CameraInfo cameraInfo;
 
+//ros::Publisher markerPub;
+ros::Publisher scanPub;
 //=======================================================================
 
 typedef struct _RGB888Pixel
@@ -551,6 +568,7 @@ bool setCameraInfo(sensor_msgs::SetCameraInfo::Request& req, sensor_msgs::SetCam
 
 void startStreaming()
 {
+    ROS_INFO("startStream");
     switch(imageType) {
     case Frame::GRAYSCALE:
         interface.streamGrayscale();
@@ -707,6 +725,8 @@ cv::Mat addDCSInfo(cv::Mat distMat, std::shared_ptr<Frame> frame)
 
 	return distMat;
 }
+
+
 
 void setAmplitudeColor(cv::Mat &imageLidar, int x, int y, int value, double end_range )
 {
@@ -890,7 +910,11 @@ void updateFrame(std::shared_ptr<Frame> frame)
         cv_bridge::CvImagePtr cv_ptr(new cv_bridge::CvImage);
 
         const size_t nPixel = frame->width * frame->height;
+#ifdef USED_INTENSITY
         pcl::PointCloud<pcl::PointXYZI>::Ptr cloud(new pcl::PointCloud<pcl::PointXYZI>());
+#else
+        pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud(new pcl::PointCloud<pcl::PointXYZRGB>());
+#endif
         cloud->header.frame_id = "roboscan_frame";
         cloud->header.stamp = pcl_conversions::toPCL(ros::Time::now());
         cloud->width = static_cast<uint32_t>(frame->width);
@@ -905,9 +929,32 @@ void updateFrame(std::shared_ptr<Frame> frame)
 
         RGB888Pixel* pTex = new RGB888Pixel[1];
 
+
+        //2d scan
+        sensor_msgs::LaserScan scan;
+        scan.header.stamp = ros::Time::now();
+        scan.header.frame_id = "roboscan_frame"; //laser_frame
+        //scan.angle_min = -0.959931; //110xPI/180=1.919862 -> 45xPI/180=0.785  
+        //scan.angle_max = 0.959931;
+        //scan.angle_increment = 1.919862 / num_readings; //3.14 / num_readings;      
+        scan.angle_min = -0.942477; //90xPI/180=-1.57 -> 45xPI/180=0.785  
+        scan.angle_max = 0.942477;
+        scan.angle_increment = 1.884955 / num_readings; //3.14 / num_readings;      
+        
+        scan.time_increment = (1 / laser_frequency) / (num_readings);
+        scan.range_min = 0.0;
+        scan.range_max = 1250.0;        
+        //
+        scan.ranges.resize(num_readings);
+        scan.intensities.resize(num_readings);
+
         for(k=0, l=0, y=0; y< frame->height; y++){
             for(x=0, pc = frame->width-1; x< frame->width; x++, k++, l+=2, pc--){
+#ifdef USED_INTENSITY
                 pcl::PointXYZI &p = cloud->points[k];
+#else
+                pcl::PointXYZRGB &p = cloud->points[k];
+#endif
                 distance = (frame->distData[l+1] << 8) + frame->distData[l];
                 amplitude = (frame->amplData[l+1] << 8)  + frame->amplData[l];
 				grayscale = (frame->grayData[l+1] << 8)  + frame->grayData[l];
@@ -950,15 +997,30 @@ void updateFrame(std::shared_ptr<Frame> frame)
                         p.y = static_cast<float>(px / 1000.0);
                         p.z = static_cast<float>(-py / 1000.0);
 
+#ifdef USED_INTENSITY
                         if(frame->dataType == Frame::DISTANCE_AMPLITUDE) p.intensity = static_cast<float>(amplitude);
                         else p.intensity = static_cast<float>(pz / 1000.0);
-
+#else        
+                        p.r = dcs2.at<Vec3b>(y, x)[0];
+                        p.g = dcs2.at<Vec3b>(y, x)[1];
+                        p.b = dcs2.at<Vec3b>(y, x)[2];
+#endif                        
+                        
                     }else{
                         p.x = distance / 1000.0;
                         p.y = -(160-pc) / 100.0;
                         p.z = (120-y) / 100.0;
+#ifdef USED_INTENSITY
                         if(frame->dataType == Frame::DISTANCE_AMPLITUDE) p.intensity =  static_cast<float>(amplitude);
                         else p.intensity = static_cast<float>(distance / 1000.0);
+#endif
+                    }
+
+                    if(y == 120)
+                    {
+                        //ranges[i] = count;
+                        scan.ranges[frame->width-x-1] = (double)distance*0.001;
+                        scan.intensities[frame->width-x-1] = amplitude;
                     }
                 
                 }else{
@@ -1009,6 +1071,8 @@ void updateFrame(std::shared_ptr<Frame> frame)
 
         imagePublisher.publish(cv_ptr->toImageMsg());
 
+        scanPub.publish(scan);
+
         delete[] pTex;
     }
 
@@ -1055,9 +1119,17 @@ void initialise()
     distanceImagePublisher = nh.advertise<sensor_msgs::Image>("distance_image_raw", 1000);
     amplitudeImagePublisher = nh.advertise<sensor_msgs::Image>("amplitude_image_raw", 1000);
     dcsImagePublisher = nh.advertise<sensor_msgs::Image>("dcs_image_raw", 1000);
+
+#ifdef USED_INTENSITY
     pointCloud2Publisher = nh.advertise<pcl::PointCloud<pcl::PointXYZI> > ("points", 100);
+#else
+    pointCloud2Publisher = nh.advertise<pcl::PointCloud<pcl::PointXYZRGB> > ("points", 100);
+#endif
+    
     cameraInfoPublisher = nh.advertise<sensor_msgs::CameraInfo>("camera_info", 1000);
     grayImagePublisher = nh.advertise<sensor_msgs::Image>("gray_image_raw", 1000);
+    scanPub = nh.advertise<sensor_msgs::LaserScan>("scan", 50);
+
 
     //advertise image Publisher
     image_transport::ImageTransport it_(nh);
@@ -1103,6 +1175,6 @@ int main(int argc, char **argv)
     initialise();
     setParameters();
     startStreaming();
-   
+
     ros::spin();
 }

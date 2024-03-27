@@ -11,7 +11,7 @@ class TcpConnection {
   static const int MARKER_SIZE = 4;
   static const int ACK_BUF_SIZE = 128;
   static constexpr const char* PORT = "50660";
-  static constexpr const char* HOST = "192.168.0.220"; 
+  static constexpr const char* HOST = "192.168.0.180"; 
   static constexpr const char* END_MARKER = "\xff\xff\x55\xaa";
   static constexpr const char* START_MARKER = "\xff\xff\xaa\x55";
 
