@@ -42,6 +42,17 @@ $ rqt
 ![bbbb](https://user-images.githubusercontent.com/106071093/226831796-d487fc42-5ae4-40c4-b5f9-e4f18af08d7c.png)
 
 
+
+ # Warning Area
+
+![Area](https://github.com/user-attachments/assets/daa38bf9-88fe-4088-939f-fdec43ee77c0)
+
+# Set Area parameters
+
+![Area parameters](https://github.com/user-attachments/assets/10978900-aa16-4f03-9da5-6e630ab15067)
+
+
+
 ```
 
 //
