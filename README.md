@@ -49,7 +49,7 @@ $ rqt
 
 # Set Area parameters
 
-![Area parameters](https://github.com/user-attachments/assets/10978900-aa16-4f03-9da5-6e630ab15067)
+![Area_parameters](https://github.com/user-attachments/assets/5f31cc3b-9fe8-4854-8774-874e18f66397)
 
 
 
