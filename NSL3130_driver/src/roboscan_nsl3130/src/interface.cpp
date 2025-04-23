@@ -6,7 +6,6 @@
 namespace nanosys {
 
 int udp_port = 45454;
-
 Interface::Interface() : tcpConnection(ioService),
     udpServer(ioService, udp_port),
     isStreaming(false),
@@ -14,6 +13,7 @@ Interface::Interface() : tcpConnection(ioService),
     currentFrame_id(0),
     data(Packet(25+320*240*4*2))
 {
+    
     serverThread.reset(new boost::thread(boost::bind(&boost::asio::io_service::run, &ioService)));
 
     udpServer.subscribe([&](const Packet& p) -> void
@@ -49,6 +49,7 @@ Interface::~Interface() {
     stopStream();
     serverThread->interrupt();
     ioService.stop();
+    
 }
 
 void Interface::stopStream() {
@@ -56,8 +57,43 @@ void Interface::stopStream() {
     std::vector<uint8_t> command({0x00, COMMAND_STOP_STREAM});
     tcpConnection.sendCommand(command);
     isStreaming = false;
-
 }
+
+void Interface::tcpInitialize(const std::string& ipAddress) {
+    tcpConnection.connect(ipAddress);
+}
+
+void Interface::setIp(const std::string& ipAddress, const std::string& subnetMask, const std::string& gateWay) {
+    std::vector<uint8_t> payload;
+    uint16_t command = COMMAND_SET_CAMERA_IP_SETTINGS;
+    insertValue(payload, command);
+
+    std::istringstream ipStream(ipAddress);
+    std::string ipTemp = "";
+    while (std::getline(ipStream, ipTemp, '.')) {
+        if (ipTemp.empty()) continue;
+        uint8_t value = static_cast<uint8_t>(std::stoi(ipTemp));
+        payload.push_back(value);
+    }
+
+    std::istringstream maskStream(subnetMask);
+    std::string maskTemp = "";
+    while (std::getline(maskStream, maskTemp, '.')) {
+        if (maskTemp.empty()) continue;
+        uint8_t value = static_cast<uint8_t>(std::stoi(maskTemp));
+        payload.push_back(value);
+    }
+
+    std::istringstream gatewayStream(gateWay);
+    std::string gatewayTemp = "";
+    while (std::getline(gatewayStream, gatewayTemp, '.')) {
+        if (gatewayTemp.empty()) continue;
+        uint8_t value = static_cast<uint8_t>(std::stoi(gatewayTemp));
+        payload.push_back(value);
+    }
+    tcpConnection.sendCommand(payload);
+}
+
 
 void Interface::streamDCS()
 {
@@ -102,7 +138,7 @@ void Interface::setOffset(int16_t offset){
 
 /*
 	mode::
-	0 : ¹Ì»ç¿ë 
+	0 : ï¿½Ì»ï¿½ï¿½ 
 	1 : 6Mhz roll-over
 	2 : 3Mhz roll-over
 */
@@ -120,6 +156,7 @@ void Interface::setDualBeam(uint8_t mode, bool usedDualbeamDist)
 
     tcpConnection.sendCommand(payload);
 }
+
 
 
 
@@ -358,5 +395,8 @@ void Interface::streamMeasurement(uint8_t cmd) {
     tcpConnection.sendCommand(std::vector<uint8_t>({0x00, cmd, 0x01}));
     isStreaming = 2;
 }
+
+
+
 
 } //end namespace nanosys

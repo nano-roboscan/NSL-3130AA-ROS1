@@ -1,15 +1,17 @@
+#include <ros/ros.h>
 #include <iostream>
 #include "tcp_connection.hpp"
 
 using boost::asio::ip::tcp;
 
 namespace nanosys {
+bool TcpConnection::reConnect = false;
+bool TcpConnection::timerStart = false;
 
 typedef std::vector<uint8_t> Packet;
 
 TcpConnection::TcpConnection(boost::asio::io_service& ioService)
   : resolver(ioService), socket(ioService), state(STATE_DISCONNECTED) {
-  connect();
 }
 
 TcpConnection::~TcpConnection() {
@@ -40,17 +42,18 @@ void TcpConnection::sendCommand(const std::vector<uint8_t>& data) {
 
   boost::system::error_code error;
   socket.write_some(boost::asio::buffer(os.str(), os.tellp()), error);
+
   if (error) {
     throw boost::system::system_error(error);
   }
   waitAck();
 }
 
-void TcpConnection::connect() {
+void TcpConnection::connect(const std::string& ipAddress) {
   if (isConnected()) return;
-
+  
   updateState(STATE_CONNECTING);
-  tcp::resolver::query query(HOST, PORT);
+  tcp::resolver::query query(ipAddress, PORT);
   tcp::resolver::iterator endpoint_iterator = resolver.resolve(query);
   tcp::resolver::iterator end;
 
@@ -60,16 +63,26 @@ void TcpConnection::connect() {
     socket.connect(*endpoint_iterator++, error);
   }
   if (error) {
-    throw::boost::system::system_error(error);
+      std::this_thread::sleep_for(std::chrono::milliseconds(3000));
+      std::cout << "reconnect" << std::endl;
+      connect(ipAddress);
+      reconnectCount++;
+
+      if (reconnectCount >= 5) {
+          throw boost::system::system_error(error);
+      }
+  } else {
+      std::cout << "connect IP : " << ipAddress << std::endl;
+      reconnectCount = 0;
   }
   updateState(STATE_CONNECTED);
 }
 
+
 void TcpConnection::disconnect() {
   if (isDisconnected()) return;
-
+  
   updateState(STATE_CLOSING);
-
   boost::system::error_code error;
   socket.shutdown(boost::asio::ip::tcp::socket::shutdown_both, error);
   if (error) {
@@ -79,17 +92,38 @@ void TcpConnection::disconnect() {
   updateState(STATE_DISCONNECTED);
 }
 
-void TcpConnection::waitAck() {
-  Packet buf(ACK_BUF_SIZE);
-  boost::system::error_code error;
 
-  this->updateState(STATE_WAIT_ACK);
-  size_t len = socket.read_some(boost::asio::buffer(buf), error);
-  if (error) {
-    throw boost::system::system_error(error);
-  }
-  this->revertState();
+void TcpConnection::waitAck() {
+    Packet buf(ACK_BUF_SIZE);
+    boost::system::error_code error;
+
+    this->updateState(STATE_WAIT_ACK);
+    
+    boost::asio::steady_timer timer(socket.get_io_service());
+    timer.expires_from_now(std::chrono::milliseconds(300));
+
+    timer.async_wait([this](const boost::system::error_code& ec) {
+        if (!ec) {
+            TcpConnection::timerStart = true;
+            disconnect();
+
+            std::string newipAddress;
+            if (!ros::param::get("camera/set_ip", newipAddress)) {
+                std::cout << newipAddress << std::endl;
+            }
+            connect(newipAddress);
+
+            if(isConnected())
+                TcpConnection::reConnect = true;
+        }
+    });
+    
+    size_t len = socket.read_some(boost::asio::buffer(buf), error);
+    timer.cancel();
+
+    this->revertState();
 }
+
 
 void TcpConnection::updateState(State state_) const {
   previousState = state;
@@ -107,5 +141,6 @@ bool TcpConnection::isConnected() const {
 bool TcpConnection::isDisconnected() const {
   return state == STATE_DISCONNECTED;
 }
+
 
 } // end namespace nanosys

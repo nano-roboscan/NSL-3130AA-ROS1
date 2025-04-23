@@ -7,7 +7,6 @@
 #include "tcp_connection.hpp"
 #include "udp_server.hpp"
 
-
 namespace nanosys {
 
 typedef std::vector<uint8_t> Packet;
@@ -17,6 +16,8 @@ public:
   Interface();
   ~Interface();
 
+  void tcpInitialize(const std::string& ipAddress);
+  void setIp(const std::string& ipAddress, const std::string& subnetMask, const std::string& gateWay);
   void stopStream();  
   void streamDCS();
   void streamGrayscale();
@@ -42,6 +43,7 @@ public:
   boost::signals2::connection subscribeFrame(std::function<void (std::shared_ptr<Frame>)>);
   boost::signals2::connection subscribeCameraInfo(std::function<void (std::shared_ptr<CameraInfo>)>);
   std::shared_ptr<CameraInfo> getCameraInfo(const Packet &);
+
 
 private:
   uint8_t isStreaming;

@@ -14,6 +14,8 @@ find_package(catkin REQUIRED COMPONENTS
   tf
   nav_msgs
   std_msgs
+  visualization_msgs
+  message_generation
 )
 
 ## System dependencies are found with CMake's conventions
@@ -50,11 +52,10 @@ find_package(OpenCV REQUIRED)
 ##   * add every package in MSG_DEP_SET to generate_messages(DEPENDENCIES ...)
 
 ## Generate messages in the 'msg' folder
-# add_message_files(
-#   FILES
-#   Message1.msg
-#   Message2.msg
-# )
+ add_message_files(
+   FILES
+   custom_pub_msg.msg
+)
 
 ## Generate services in the 'srv' folder
 # add_service_files(
@@ -78,6 +79,7 @@ find_package(OpenCV REQUIRED)
 generate_messages(
     DEPENDENCIES
     geometry_msgs
+    std_msgs
 )
 
 ## Generate added messages and services with any dependencies listed here
@@ -115,8 +117,8 @@ generate_messages(
 catkin_package(
   INCLUDE_DIRS include
   LIBRARIES roboscan_nsl3130
-  CATKIN_DEPENDS roscpp dynamic_reconfigure message_runtime sensor_msgs cv_bridge image_transport std_msgs
-#  DEPENDS system_lib 
+  CATKIN_DEPENDS roscpp dynamic_reconfigure message_runtime sensor_msgs cv_bridge image_transport std_msgs message_generation
+# DEPENDS system_lib 
 )
 
 ###########
