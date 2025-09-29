@@ -1,52 +1,23 @@
-<?xml version="1.0"?>
-
 <launch>
-  <arg name="ns" default="roboscan_nsl3130"/>
-  <arg name="nn" default="camera"/>
-  <arg name="respawn" default="false"/>  
-  <arg name="lens_type" default="2"/>
-  <arg name="lens_center_offset_x" default="0"/>
-  <arg name="lens_center_offset_y" default="0"/>
-  <arg name="image_type" default="2"/>
-  <arg name="start_stream" default="true"/>
-  <arg name="int0"  default="1000"/>
-  <arg name="int1"  default="100"/>
-  <arg name="int2"  default="50"/>
-  <arg name="int_gray" default="3000"/>
-  <arg name="offset" default="0"/>
-  <arg name="min_amplitude" default="100"/>
-  <arg name="frequence_modulation" default="0"/>
-  <arg name="channel" default="0"/>
-  <arg name="median_filter" default="false"/>
-  <arg name="average_filter" default="false"/>
-  <arg name="edge_filter_threshold" default="0"/>
-  <arg name="temporal_filter_factor" default="0.3"/>
-  <arg name="temporal_filter_threshold" default="300"/>
-  <arg name="temporal_edge_filter_threshold_low" default="0"/>
-  <arg name="temporal_edge_filter_threshold_high" default="0"/>
-  <arg name="interference_detect_limit" default="0"/>
-  <arg name="use_last_value" default="false"/>
-  <arg name="cartesian" default="true"/>
-  <arg name="publish_point_cloud" default="true"/>
-  <arg name="transform_angle" default="0"/>
-  <arg name="cut_pixels" default="0"/>
 
-  <rosparam file ="$(find roboscan_nsl3130)/rqt/rqt.yaml" command="load" ns="$(arg ns)" />
+  <node name="roboscan_publish_node" pkg="roboscan_nsl3130" type="roboscan_publish_node" output="screen" />
 
-  <group ns="$(arg ns)">
-
-        <node pkg="roboscan_nsl3130"
-          type="roboscan_publish_node"
-          name="$(arg nn)"
-          output="screen"
-          respawn="$(arg respawn)">
-   
-
-     </node>
-    <node name="rviz" pkg="rviz" type="rviz" args= "-d $(find roboscan_nsl3130)/rviz/roboscan_nsl3130rviz.rviz" > </node>
-    <node name="rqt_reconfigure" pkg="rqt_reconfigure" type="rqt_reconfigure"> </node>
-
-    
-
-  </group>
+  <node pkg="rviz" type="rviz" name="rviz"
+        args="-d $(find roboscan_nsl3130)/rviz/roboscan_nsl3130rviz.rviz" />
+  <node name="rqt_gui" pkg="rqt_gui" type="rqt_gui" />
 </launch>
+
+<!--
+<launch>
+  <arg name="ip_addr" default=""/>
+  <arg name="connect_lidar" default="true"/>
+
+  <node pkg="roboscan_nsl3130" type="roboscan_publish_node"
+        name="roboscan_publish_node" output="screen" respawn="true" respawn_delay="1.5" />
+
+  <node pkg="rqt_gui" type="rqt_gui" name="rqt_gui" />
+
+  <node pkg="rviz" type="rviz" name="rviz"
+        args="-d $(find roboscan_nsl3130)/rviz/roboscan_nsl3130rviz.rviz" />
+</launch>
+-->

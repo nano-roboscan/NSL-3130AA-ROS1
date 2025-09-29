@@ -13,5 +13,3 @@ int16 point3
 bool area3
 
 
-
-

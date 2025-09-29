@@ -1,0 +1,7 @@
+IP Addr: 192.168.0.220
+FrameID: roboscan_frame
+MaxDistance: 12500
+PointColud EDGE: 200
+ImageType: DISTANCE_AMPLITUDE
+LensType: LENS_SF
+LidarAngle: 0

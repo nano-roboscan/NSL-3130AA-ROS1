@@ -9,14 +9,13 @@
  
 2. Build NSL-3130AA demo
 ```
-$ cd NSL3130_driver
+$ cd NSL-3130AA-ROS1/NSL3130_driver
 $ catkin_make
 $ source ./devel/setup.bash
 ```
  
 3. Start commands
 ```
-$ rosrun roboscan_nsl3130 roboscan_publish_node
 $ roslaunch roboscan_nsl3130 camera.Launch
 ```
 
@@ -34,31 +33,7 @@ $ roslaunch roboscan_nsl3130 camera.Launch
 
 
 # Set parameters
-```
-$ rqt
- (reconfigure)
-```
-
 ![bbbb](https://user-images.githubusercontent.com/106071093/226831796-d487fc42-5ae4-40c4-b5f9-e4f18af08d7c.png)
-
-
-
- # Warning Area
-
-![Area](https://github.com/user-attachments/assets/daa38bf9-88fe-4088-939f-fdec43ee77c0)
-
-# Set Area parameters
-
-![Area_parameters](https://github.com/user-attachments/assets/5f31cc3b-9fe8-4854-8774-874e18f66397)
-
-
-
-```
-
-//
-```
-
- 
 
 
 

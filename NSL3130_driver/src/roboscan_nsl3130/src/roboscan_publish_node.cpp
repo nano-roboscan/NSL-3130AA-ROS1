@@ -1,45 +1,37 @@
-#include <ros/ros.h>
-#include <ros/package.h>
-#include <cstdlib>
-#include <sensor_msgs/Image.h>
-#include <sensor_msgs/image_encodings.h>
-#include <sensor_msgs/CameraInfo.h>
-#include <sensor_msgs/PointCloud.h>
-#include <sensor_msgs/SetCameraInfo.h>
-#include <dynamic_reconfigure/server.h>
-#include <roboscan_nsl3130/roboscan_nsl3130Config.h>
-#include <roboscan_nsl3130/custom_pub_msg.h>
-#include <pcl_ros/point_cloud.h>
+#include <cstdio>
+#include <functional>
+#include <experimental/filesystem>
+#include <memory>
+#include <string>
+#include "ros/ros.h"
+#include "std_msgs/String.h"
+#include <sensor_msgs/PointCloud2.h>
 #include <pcl_conversions/pcl_conversions.h>
-#include "cartesian_transform.hpp"
-#include "interface.hpp"
-
 #include <opencv2/opencv.hpp>
 #include <opencv2/highgui/highgui.hpp>
 #include <opencv2/core/core.hpp>
 #include <opencv2/imgproc/imgproc.hpp>
 #include <opencv2/core/types.hpp>
-
 #include <cv_bridge/cv_bridge.h>
-#include <image_transport/image_transport.h>
-#include <sensor_msgs/image_encodings.h>
-#include <visualization_msgs/Marker.h>
-#include <pcl/visualization/pcl_visualizer.h>
-#include <sensor_msgs/LaserScan.h>
-
+#include <thread>
+#include <sensor_msgs/CameraInfo.h>
+#include <sensor_msgs/SetCameraInfo.h>
+#include <sys/stat.h>
+#include <cstdlib>
+#include <unistd.h>
+#include <ros/package.h> 
+#include "roboscan_publish_node.hpp"
+#include <fstream>    
+#include <stdexcept> 
+using namespace NslOption;
+using namespace nanosys;
+using namespace std::chrono_literals;
+using namespace cv;
+using namespace std;
 
 #define WIN_NAME "NSL-3130AA IMAGE"
-#define MAX_LEVELS  	9
-#define NUM_COLORS     	30000
-
-
-#define PIXEL_VALID_DATA  	64000
-#define LOW_AMPLITUDE       64001
-#define ADC_OVERFLOW        64002
-#define SATURATION          64003
-#define BAD_PIXEL           64004
-#define INTERFERENCE        64007
-#define EDGE_FILTERED       64008
+#define MAX_LEVELS  9
+#define NUM_COLORS     		30000
 
 #define LEFTX_MAX	124	
 #define RIGHTX_MIN	131
@@ -51,211 +43,10 @@
 #define RIGHTY_MAX	239	
 #define Y_INTERVAL	2
 
-#define USED_INTENSITY //else gray pointcloud
+#define DISTANCE_INFO_HEIGHT	80
 
-using namespace nanosys;
-using namespace cv;
-
-int imageType = 2; //image and aquisition type: 0 - grayscale, 1 - distance, 2 - distance_amplitude
-int lensType = 2;  //0- wide field, 1- standard field, 2 - narrow field
-int old_lensType;
-bool medianFilter;
-bool averageFilter;
-double temporalFilterFactor;
-int temporalFilterThreshold;
-int edgeThreshold;
-int temporalEdgeThresholdLow;
-int temporalEdgeThresholdHigh;
-int interferenceDetectionLimit;
-bool startStream;
-bool useLastValue;
-bool publishPointCloud;
-bool cartesian;
-int channel;
-int frequencyModulation;
-int int0, int1, int2, intGr; //integration times
-int hdr_mode; //0 - hdr off, 1 - hdr spatial, 2 - hdr temporal
-int minAmplitude;
-int lensCenterOffsetX = 0;
-int lensCenterOffsetY = 0;
-int old_lensCenterOffsetX = 0;
-int old_lensCenterOffsetY = 0;
-
-int dual_beam = 0;
-bool used_dual_beam_distance = true;
-
-int roi_leftX = 0;
-int roi_topY = 0;
-int roi_rightX = 319;
-int roi_bottomY = 239;
-
-const int width   = 320;
-const int width2  = 160;
-const int height  = 240;
-const int height2 = 120;
-const double sensorPixelSizeMM = 0.02; //camera sensor pixel size 20x20 um
-
-uint8_t grayscaleIlluminationMode = 0;
-int8_t bAdcOverflow = 1;
-int8_t bSaturation = 1;
-
-double transformAngle = 0;
-int cutPixels = 0;
-bool cvShow = false;
-float maxDistance;
-int mouseXpos = 0;
-int mouseYpos = 0;
-char winName[100];
-std::vector<cv::Vec3b> colorVector;
-
-//2D scan data
-unsigned int num_readings = 320;
-double laser_frequency = 200;
-double ranges[320];
-double intensities[320];
-
-int count = 0;      
-
-//Create Var
-bool paramSave = false;
-bool areaBtn[4] {false, false, false, false};
-
-double areaScaleX[4];
-double areaScaleY[4];
-double areaScaleZ[4];
-
-double areaPosX[4];
-double areaPosY[4];
-double areaPosZ[4];
-
-int pointCount[4] {0, 0, 0, 0};
-
-bool pointDetect[4];
-
-double x_min[4];
-double x_max[4];
-double y_min[4];
-double y_max[4];
-double z_min[4];
-double z_max[4];
-
-int pointLimit[4];
-
-// Create Ros value
-visualization_msgs::Marker area0Box;
-visualization_msgs::Marker area1Box;
-visualization_msgs::Marker area2Box;
-visualization_msgs::Marker area3Box;
-roboscan_nsl3130::custom_pub_msg msgs;
-//end
-
-uint32_t frameSeq;
-
-boost::signals2::connection connectionFrames;
-boost::signals2::connection connectionCameraInfo;
-
-ros::Publisher distanceImagePublisher;
-ros::Publisher amplitudeImagePublisher;
-ros::Publisher dcsImagePublisher;
-ros::Publisher grayImagePublisher;
-
-
-image_transport::Publisher imagePublisher;
-
-ros::Publisher cameraInfoPublisher;
-ros::Publisher pointCloud2Publisher;
-ros::ServiceServer cameraInfoService;
-
-Interface interface;
-
-
-CartesianTransform cartesianTransform;
-sensor_msgs::CameraInfo cameraInfo;
-
-
-ros::Publisher areaMsgsPublisher;
-ros::Publisher scanPub;
-
-ros::Publisher area0Pub;
-ros::Publisher area1Pub;
-ros::Publisher area2Pub;
-ros::Publisher area3Pub;
-
-std::string setIpaddress;
-std::string setSubnetmask;
-std::string setGateway;
-ros::Timer timer;
-//=======================================================================
-
-typedef struct _RGB888Pixel
-{
-    unsigned char r;
-    unsigned char g;
-    unsigned char b;
-} RGB888Pixel;
-
-double interpolate( double x, double x0, double y0, double x1, double y1){
-
-    if( x1 == x0 ){
-        return y0;
-    } else {
-        return ((x-x0)*(y1-y0)/(x1-x0) + y0);
-    }
-
-}
-
-void createColorMapPixel(int numSteps, int indx, unsigned char &red, unsigned char &green, unsigned char &blue)
-{
-    double k = 1;
-    double BIT0 = -0.125 * k - 0.25;
-    double BIT1 = BIT0 + 0.25 * k;
-    double BIT2 = BIT1 + 0.25 * k;
-    double BIT3 = BIT2 + 0.25 * k;
-
-    double G0 = BIT1;
-    double G1 = G0 + 0.25 * k;
-    double G2 = G1 + 0.25 * k;
-    double G3 = G2 + 0.25 * k + 0.125;
-
-    double R0 = BIT2;
-    double R1 = R0 + 0.25 * k;
-    double R2 = R1 + 0.25 * k;
-    double R3 = R2 + 0.25 * k + 0.25;
-
-    double i = (double)indx/(double)numSteps - 0.25 * k;
-
-    if( i>= R0 && i < R1 ){
-        red = interpolate(i, R0, 0, R1, 255);
-    } else if((i >= R1) && (i < R2)){
-        red = 255;
-    } else if((i >= R2) && (i < R3)) {
-        red = interpolate(i, R2, 255, R3, 0);
-    } else {
-        red = 0;
-    }
-
-    if( i>= G0 && i < G1 ){
-        green = interpolate(i, G0, 0, G1, 255);
-    } else if((i>=G1)&&(i<G2)){
-        green = 255;
-    } else if((i >= G2)&&(i < G3)){
-        green = interpolate(i, G2, 255, G3, 0);
-    } else {
-        green = 0;
-    }
-
-
-    if( i>= BIT0 && i < BIT1 ){
-        blue = interpolate(i, BIT0, 0, BIT1, 255);
-    } else if((i >= BIT1)&&(i < BIT2)){
-        blue = 255;
-    } else if((i >= BIT2)&&(i < BIT3)) {
-        blue = interpolate(i, BIT2, 255, BIT3, 0);
-    } else{
-        blue = 0;
-    }
-
-}
+std::atomic<int> x_start = -1, y_start = -1;
+std::unique_ptr<NslPCD> latestFrame = std::make_unique<NslPCD>();
 
 
 static void callback_mouse_click(int event, int x, int y, int flags, void* user_data)
@@ -265,8 +56,8 @@ static void callback_mouse_click(int event, int x, int y, int flags, void* user_
 	
 	if (event == cv::EVENT_LBUTTONDOWN)
 	{
-		mouseXpos = x;
-		mouseYpos = y;
+		x_start = x;
+		y_start = y;
 	}
 	else if (event == cv::EVENT_LBUTTONUP)
 	{
@@ -275,1452 +66,874 @@ static void callback_mouse_click(int event, int x, int y, int flags, void* user_
 	{
 	}
 }
-
-
-
-
-void paramDump()
+roboscanPublisher::roboscanPublisher() : nh_("~")
 {
-    std::string package_path = ros::package::getPath("roboscan_nsl3130");
-    
-    std::string full_path = package_path + "/rqt";
-    std::string command = "rosparam dump " + full_path + "/rqt.yaml";
-    int ret = system(command.c_str());
+    ROS_INFO("start roboscanPublisher...\n");
+    ros::NodeHandle public_nh;
+
+    it_.reset(new image_transport::ImageTransport(public_nh));
+    imgDistancePub = public_nh.advertise<sensor_msgs::Image>("roboscanDistance", 10);
+    imgAmplPub     = public_nh.advertise<sensor_msgs::Image>("roboscanAmpl", 10);
+    imgGrayPub     = public_nh.advertise<sensor_msgs::Image>("roboscanGray", 10);
+    pointcloudPub  = public_nh.advertise<sensor_msgs::PointCloud2>("roboscanPointCloud", 10);
+    std::string pkg = ros::package::getPath("roboscan_nsl3130");
+    yaml_path_ = pkg + "/lidar_params.yaml";
+	dr_server_.reset(new dynamic_reconfigure::Server<roboscan_nsl3130::RoboscanNSL3130Config>(param_mutex_, nh_));
+	dr_server_->setCallback(boost::bind(&roboscanPublisher::dynamicReconfigureCallback, this, _1, _2));
+
+	reconfigure = false;
+	mouseXpos = -1;
+	mouseYpos = -1;
+
+    runThread = true;
+    publisherThread.reset(new std::thread(&roboscanPublisher::threadCallback, this));
+
+    ROS_INFO("\nRun rqt to view the image!\n");
 }
 
-void setWinName(bool configCvShow)
+
+
+roboscanPublisher::~roboscanPublisher()
 {
-	bool changedCvShow = cvShow != configCvShow ? true : false;	
-	cvShow = configCvShow;
+	runThread = false;
+	publisherThread->join();
 
-	printf("cvShow = %d/%d\n", configCvShow, changedCvShow);
+	nsl_close();
 
+    ROS_INFO("\nEnd roboscanPublisher()!\n");
+}
+
+
+void roboscanPublisher::threadCallback()
+{
+	auto lastTime = chrono::steady_clock::now();
+	int frameCount = 0;
+
+	while(ros::ok() && runThread){
+
+        if (reconfigure) {
+            reconfigure = false;
+            setReconfigure();
+        }   
+
+		if( nsl_getPointCloudData(nsl_handle, latestFrame.get()) == NSL_ERROR_TYPE::NSL_SUCCESS )
+		{
+			frameCount++;			
+			publishFrame(latestFrame.get());
+		}
+
+		std::this_thread::sleep_for(std::chrono::milliseconds(10));
+
+		auto now = chrono::steady_clock::now();
+		auto elapsed = chrono::duration_cast<chrono::milliseconds>(now - lastTime).count();
+		if( elapsed >= 1000 ){
+			viewerParam.frameCount = frameCount;
+			frameCount = 0;
+			lastTime = now;
+//			ROS_INFO("frame = %d fps\n", viewerParam.frameCount);
+		}
+		
+	}
+
+	cv::destroyAllWindows();
+	ROS_INFO("end threadCallback\n");
+}
+
+void roboscanPublisher::dynamicReconfigureCallback(roboscan_nsl3130::RoboscanNSL3130Config &config, uint32_t level)
+{
+    boost::recursive_mutex::scoped_lock lock(param_mutex_);
+    (void)level;
+    ROS_INFO("Reconfigure Request Received.");
+
+    if (viewerParam.cvShow != config.cv_show) {
+        viewerParam.cvShow = config.cv_show;
+        viewerParam.changedCvShow = true; 
+    }
+    if (viewerParam.ipAddr != config.ip_addr) {
+        ROS_INFO("IP address changed from %s to %s", viewerParam.ipAddr.c_str(), config.ip_addr.c_str());
+        viewerParam.ipAddr     = config.ip_addr;
+        viewerParam.reOpenLidar = true;
+        viewerParam.saveParam   = true; 
+    }
+	/*
+    if (viewerParam.netMask != config.net_mask) {
+        ROS_INFO("Netmask changed %s -> %s", viewerParam.netMask.c_str(), config.net_mask.c_str());
+        viewerParam.netMask    = config.net_mask;
+        viewerParam.reOpenLidar = true;
+        viewerParam.saveParam   = true;
+    }
+    if (viewerParam.gwAddr != config.gw_addr) {
+        ROS_INFO("Gateway changed %s -> %s", viewerParam.gwAddr.c_str(), config.gw_addr.c_str());
+        viewerParam.gwAddr     = config.gw_addr;
+        viewerParam.reOpenLidar = true;
+        viewerParam.saveParam   = true;
+    }
+	*/
+    if (viewerParam.imageType != config.image_type) {
+		if( config.image_type >= 1 && config.image_type <= 8 ){
+			viewerParam.imageType = config.image_type;
+			viewerParam.changedImageType = true;
+			viewerParam.saveParam = true;
+		}
+    }
+    if (viewerParam.lensType != config.lens_type) {
+		if( config.lens_type >= 0 && config.lens_type <= 2 ){
+			viewerParam.lensType = config.lens_type;
+			viewerParam.reOpenLidar = true;
+			viewerParam.saveParam	= true; 
+		}
+    }
+    if (viewerParam.frame_id != config.frame_id) {
+        ROS_INFO("changed to frame ID %s -> %s", viewerParam.frame_id.c_str(), config.frame_id.c_str());
+		if (config.frame_id.empty())
+	        viewerParam.frame_id = "roboscan_frame";
+		else
+	        viewerParam.frame_id = config.frame_id;
+        viewerParam.saveParam = true; 
+    }
+    if (viewerParam.maxDistance != config.max_distance) {
+        viewerParam.maxDistance = config.max_distance;
+        viewerParam.saveParam   = true; 
+    }
+    if (viewerParam.pointCloudEdgeThreshold != config.pointcloud_edge) {
+        viewerParam.pointCloudEdgeThreshold = config.pointcloud_edge;
+        viewerParam.saveParam               = true; 
+    }
+    if (viewerParam.lidarAngle != config.transform_angle) {
+        viewerParam.lidarAngle = config.transform_angle;
+        viewerParam.saveParam  = true; 
+    }
+    if (config.hdr_mode >= 0 && config.hdr_mode <= 2) {
+        nslConfig.hdrOpt = static_cast<NslOption::HDR_OPTIONS>(config.hdr_mode);
+    }
+
+    nslConfig.integrationTime3D        = config.int_0;
+    nslConfig.integrationTime3DHdr1    = config.int_1;
+    nslConfig.integrationTime3DHdr2    = config.int_2;
+    nslConfig.integrationTimeGrayScale = config.int_gr;
+    nslConfig.minAmplitude             = config.min_amplitude;
+
+    if (config.mod_index >= 0 && config.mod_index <= 3) {
+        nslConfig.mod_frequencyOpt = static_cast<NslOption::MODULATION_OPTIONS>(config.mod_index);
+    }
+    if (config.channel >= 0 && config.channel <= 15) {
+        nslConfig.mod_channelOpt = static_cast<NslOption::MODULATION_CH_OPTIONS>(config.channel);
+    }
+    if (nslConfig.roiXMin != config.roi_left_x) {
+        int x1_tmp = config.roi_left_x;
+        if (x1_tmp % X_INTERVAL) x1_tmp += X_INTERVAL - (x1_tmp % X_INTERVAL);
+        if (x1_tmp > LEFTX_MAX)   x1_tmp = LEFTX_MAX;
+        if (config.roi_left_x != x1_tmp) {
+            ROS_DEBUG("Correcting roi_left_x from %d to %d", config.roi_left_x, x1_tmp);
+            config.roi_left_x = x1_tmp;         
+        }
+        nslConfig.roiXMin = x1_tmp;
+    }
+    if (nslConfig.roiXMax != config.roi_right_x) {
+        int x2_tmp = config.roi_right_x;
+        if ((x2_tmp - RIGHTX_MIN) % X_INTERVAL) x2_tmp -= ((x2_tmp - RIGHTX_MIN) % X_INTERVAL);
+        if (x2_tmp < RIGHTX_MIN) x2_tmp = RIGHTX_MIN;
+        if (x2_tmp > RIGHTX_MAX) x2_tmp = RIGHTX_MAX;
+        if (config.roi_right_x != x2_tmp) {
+            ROS_DEBUG("Correcting roi_right_x from %d to %d", config.roi_right_x, x2_tmp);
+            config.roi_right_x = x2_tmp;        
+        }
+        nslConfig.roiXMax = x2_tmp;
+    }
+    if (nslConfig.roiYMin != config.roi_top_y) {
+        int y1_tmp = config.roi_top_y;
+        if (y1_tmp % Y_INTERVAL) y1_tmp++;
+        if (y1_tmp > LEFTY_MAX)  y1_tmp = LEFTY_MAX;
+        if (config.roi_top_y != y1_tmp) {
+            ROS_DEBUG("Correcting roi_top_y from %d to %d", config.roi_top_y, y1_tmp);
+            config.roi_top_y = y1_tmp;        
+        }
+        nslConfig.roiYMin = y1_tmp;
+        nslConfig.roiYMax = RIGHTY_MAX;          
+    }
+
+    nslConfig.medianOpt                        = static_cast<NslOption::FUNCTION_OPTIONS>(config.median_filter);
+    nslConfig.gaussOpt                         = static_cast<NslOption::FUNCTION_OPTIONS>(config.gaussian_filter);
+    nslConfig.temporalFactorValue              = static_cast<int>(config.temporal_filter_factor * 1000);
+    nslConfig.temporalThresholdValue           = config.temporal_filter_threshold;
+    nslConfig.edgeThresholdValue               = config.edge_filter_threshold;
+    nslConfig.interferenceDetectionLimitValue  = config.interference_detection_limit;
+    nslConfig.interferenceDetectionLastValueOpt= static_cast<NslOption::FUNCTION_OPTIONS>(config.use_last_value);
+    nslConfig.dbModOpt                         = static_cast<NslOption::DUALBEAM_MOD_OPTIONS>(config.dual_beam);
+    nslConfig.dbOpsOpt                         = static_cast<NslOption::DUALBEAM_OPERATION_OPTIONS>(config.dual_beam_option);
+    nslConfig.grayscaleIlluminationOpt         = static_cast<NslOption::FUNCTION_OPTIONS>(config.grayscale_led);
+
+    reconfigure = true;
+}
+
+
+
+
+void roboscanPublisher::timeDelay(int milli)
+{
+	auto start = std::chrono::steady_clock::now();
+	while ( runThread != 0 ) {
+		auto now = std::chrono::steady_clock::now();
+		if (std::chrono::duration_cast<std::chrono::milliseconds>(now - start).count() >= milli) {
+			break;
+		}
+
+		std::this_thread::sleep_for(std::chrono::milliseconds(10));
+	}
+}
+
+void roboscanPublisher::renewParameter()
+{
+	
+    roboscan_nsl3130::RoboscanNSL3130Config cfg_for_gui;
+	
+    cfg_for_gui.ip_addr = viewerParam.ipAddr;
+    cfg_for_gui.cv_show = viewerParam.cvShow;
+    cfg_for_gui.frame_id = viewerParam.frame_id;
+    cfg_for_gui.lens_type = viewerParam.lensType;
+    cfg_for_gui.image_type = viewerParam.imageType;
+    cfg_for_gui.transform_angle = viewerParam.lidarAngle;
+    cfg_for_gui.pointcloud_edge = viewerParam.pointCloudEdgeThreshold;
+    cfg_for_gui.max_distance = viewerParam.maxDistance;
+
+    cfg_for_gui.hdr_mode = static_cast<int>(nslConfig.hdrOpt);
+    cfg_for_gui.int_0 = nslConfig.integrationTime3D;
+    cfg_for_gui.int_1 = nslConfig.integrationTime3DHdr1;
+    cfg_for_gui.int_2 = nslConfig.integrationTime3DHdr2;
+    cfg_for_gui.int_gr = nslConfig.integrationTimeGrayScale;
+    cfg_for_gui.min_amplitude = nslConfig.minAmplitude;
+    cfg_for_gui.mod_index = static_cast<int>(nslConfig.mod_frequencyOpt);
+    cfg_for_gui.channel = static_cast<int>(nslConfig.mod_channelOpt);
+    cfg_for_gui.roi_left_x = nslConfig.roiXMin;
+    cfg_for_gui.roi_top_y = nslConfig.roiYMin;
+    cfg_for_gui.roi_right_x = nslConfig.roiXMax;
+    cfg_for_gui.median_filter = static_cast<bool>(nslConfig.medianOpt);
+    cfg_for_gui.gaussian_filter = static_cast<bool>(nslConfig.gaussOpt);
+    cfg_for_gui.temporal_filter_factor = nslConfig.temporalFactorValue / 1000.0;
+    cfg_for_gui.temporal_filter_threshold = nslConfig.temporalThresholdValue;
+    cfg_for_gui.edge_filter_threshold = nslConfig.edgeThresholdValue;
+    cfg_for_gui.interference_detection_limit = nslConfig.interferenceDetectionLimitValue;
+    cfg_for_gui.use_last_value = static_cast<bool>(nslConfig.interferenceDetectionLastValueOpt);
+    cfg_for_gui.dual_beam = static_cast<int>(nslConfig.dbModOpt);
+    cfg_for_gui.dual_beam_option = static_cast<int>(nslConfig.dbOpsOpt);
+    cfg_for_gui.grayscale_led = static_cast<bool>(nslConfig.grayscaleIlluminationOpt);
+	
+    if (dr_server_) { 
+        dr_server_->updateConfig(cfg_for_gui);
+    }
+	
+	
+    nh_.setParam("ip_addr",               viewerParam.ipAddr);
+    nh_.setParam("cv_show",               viewerParam.cvShow);
+    nh_.setParam("frame_id",              viewerParam.frame_id);
+
+    nh_.setParam("lens_type",             viewerParam.lensType);
+    nh_.setParam("image_type",            viewerParam.imageType);
+    nh_.setParam("hdr_mode",              static_cast<int>(nslConfig.hdrOpt));
+
+    nh_.setParam("int_0",                 nslConfig.integrationTime3D);
+    nh_.setParam("int_1",                 nslConfig.integrationTime3DHdr1);
+    nh_.setParam("int_2",                 nslConfig.integrationTime3DHdr2);
+    nh_.setParam("int_gr",                nslConfig.integrationTimeGrayScale);
+
+    nh_.setParam("min_amplitude",         nslConfig.minAmplitude);
+    nh_.setParam("mod_index",             static_cast<int>(nslConfig.mod_frequencyOpt));
+    nh_.setParam("channel",               static_cast<int>(nslConfig.mod_channelOpt));
+
+    nh_.setParam("roi_left_x",            nslConfig.roiXMin);
+    nh_.setParam("roi_top_y",             nslConfig.roiYMin);
+    nh_.setParam("roi_right_x",           nslConfig.roiXMax);
+
+    nh_.setParam("transform_angle",       viewerParam.lidarAngle);
+
+    nh_.setParam("median_filter",         static_cast<bool>(nslConfig.medianOpt));
+    nh_.setParam("gaussian_filter",       static_cast<bool>(nslConfig.gaussOpt));
+    nh_.setParam("temporal_filter_factor",nslConfig.temporalFactorValue / 1000.0);
+    nh_.setParam("temporal_filter_threshold", nslConfig.temporalThresholdValue);
+    nh_.setParam("edge_filter_threshold", nslConfig.edgeThresholdValue);
+
+    nh_.setParam("interference_detection_limit",  nslConfig.interferenceDetectionLimitValue);
+    nh_.setParam("use_last_value",        static_cast<bool>(nslConfig.interferenceDetectionLastValueOpt));
+
+    nh_.setParam("dual_beam",             static_cast<int>(nslConfig.dbModOpt));
+    nh_.setParam("dual_beam_option",      static_cast<int>(nslConfig.dbOpsOpt));
+
+    nh_.setParam("grayscale_led",         static_cast<bool>(nslConfig.grayscaleIlluminationOpt));
+    nh_.setParam("pointcloud_edge",       viewerParam.pointCloudEdgeThreshold);
+    nh_.setParam("max_distance",          viewerParam.maxDistance);
+	
+
+    ROS_INFO("[renewParameter]!!!");
+}
+
+
+void roboscanPublisher::setReconfigure()
+{	
+	if( viewerParam.saveParam )
+	{
+		viewerParam.saveParam = false;
+		save_params();
+	}
+
+	if( !viewerParam.changedCvShow )
+	{
+		nsl_streamingOff(nsl_handle);
+		
+		std::cout << " nsl_handle = "<< nsl_handle << "nsl_open :: reOpenLidar = "<< viewerParam.reOpenLidar << std::endl;
+		
+		if( nsl_handle < 0 && viewerParam.reOpenLidar ){
+
+			nslConfig.lidarAngle = viewerParam.lidarAngle;
+			nslConfig.lensType = static_cast<NslOption::LENS_TYPE>(viewerParam.lensType);
+			nsl_handle = nsl_open(viewerParam.ipAddr.c_str(), &nslConfig, FUNCTION_OPTIONS::FUNC_ON);
+			viewerParam.reOpenLidar = false;
+
+			if( nsl_handle >= 0 ){
+				renewParameter();
+			}
+		}
+		
+		
+		nsl_setMinAmplitude(nsl_handle, nslConfig.minAmplitude);
+		nsl_setIntegrationTime(nsl_handle, nslConfig.integrationTime3D, nslConfig.integrationTime3DHdr1, nslConfig.integrationTime3DHdr2, nslConfig.integrationTimeGrayScale);
+		nsl_setHdrMode(nsl_handle, nslConfig.hdrOpt);
+		nsl_setFilter(nsl_handle, nslConfig.medianOpt, nslConfig.gaussOpt, nslConfig.temporalFactorValue, nslConfig.temporalThresholdValue, nslConfig.edgeThresholdValue, nslConfig.interferenceDetectionLimitValue, nslConfig.interferenceDetectionLastValueOpt);
+		nsl_set3DFilter(nsl_handle, viewerParam.pointCloudEdgeThreshold);
+		nsl_setAdcOverflowSaturation(nsl_handle, nslConfig.overflowOpt, nslConfig.saturationOpt);
+		nsl_setDualBeam(nsl_handle, nslConfig.dbModOpt, nslConfig.dbOpsOpt);
+		nsl_setModulation(nsl_handle, nslConfig.mod_frequencyOpt, nslConfig.mod_channelOpt, NslOption::FUNCTION_OPTIONS::FUNC_OFF);
+		nsl_setRoi(nsl_handle, nslConfig.roiXMin, nslConfig.roiYMin, nslConfig.roiXMax, nslConfig.roiYMax);
+		nsl_setGrayscaleillumination(nsl_handle, nslConfig.grayscaleIlluminationOpt);
+		
+		nsl_saveConfiguration(nsl_handle);
+
+		startStreaming();
+	}
+
+	setWinName();
+	std::cout << "end setReconfigure"<< std::endl;
+
+}
+
+void roboscanPublisher::setWinName()
+{
+	bool changedCvShow = viewerParam.changedCvShow || viewerParam.changedImageType;
+	viewerParam.changedCvShow = false;
+	viewerParam.changedImageType = false;
+	
 	if( changedCvShow ){
 		cv::destroyAllWindows();
 	}
 	
-	if( configCvShow == false || changedCvShow == false ) return;
-
-	if( imageType == Frame::GRAYSCALE ){
-		sprintf(winName,"%s(Gray)", WIN_NAME);
-	}
-	else if( imageType == Frame::DISTANCE ){
+	if( viewerParam.cvShow == false || changedCvShow == false ) return;
+	
+	if( nslConfig.operationModeOpt == OPERATION_MODE_OPTIONS::DISTANCE_MODE){
 		sprintf(winName,"%s(Dist)", WIN_NAME);
 	}
-	else if( imageType == Frame::DISTANCE_AMPLITUDE ){
+	else if( nslConfig.operationModeOpt == OPERATION_MODE_OPTIONS::GRAYSCALE_MODE){
+		sprintf(winName,"%s(Gray)", WIN_NAME);
+	}
+	else if( nslConfig.operationModeOpt == OPERATION_MODE_OPTIONS::DISTANCE_AMPLITUDE_MODE){
 		sprintf(winName,"%s(Dist/Ampl)", WIN_NAME);
 	}
-	else if( imageType == Frame::DCS ){
-		sprintf(winName,"%s(DCS)", WIN_NAME);
-	}
-	else if( imageType == Frame::DISTANCE_GRAYSCALE ){
+	else if( nslConfig.operationModeOpt == OPERATION_MODE_OPTIONS::DISTANCE_GRAYSCALE_MODE){
 		sprintf(winName,"%s(Dist/Gray)", WIN_NAME);
 	}
-	else if( imageType == Frame::DISTANCE_AMPLITUDE_GRAYSCALE ){
-		sprintf(winName,"%s(Dist/Ampl/Gray)", WIN_NAME);
+	else if( nslConfig.operationModeOpt == OPERATION_MODE_OPTIONS::RGB_MODE){
+		sprintf(winName,"%s(RGB)", WIN_NAME);
 	}
-
+	else if( nslConfig.operationModeOpt == OPERATION_MODE_OPTIONS::RGB_DISTANCE_MODE){
+		sprintf(winName,"%s(RGB/Dist)", WIN_NAME);
+	}
+	else if( nslConfig.operationModeOpt == OPERATION_MODE_OPTIONS::RGB_DISTANCE_AMPLITUDE_MODE){
+		sprintf(winName,"%s(RGB/Dist/Ampl)", WIN_NAME);
+	}
+	else if( nslConfig.operationModeOpt == OPERATION_MODE_OPTIONS::RGB_DISTANCE_GRAYSCALE_MODE){
+		sprintf(winName,"%s(RGB/Dist/Gray)", WIN_NAME);
+	}
+	else{
+		sprintf(winName,"%s(READY)", WIN_NAME);
+	}
+	
 	cv::namedWindow(winName, cv::WINDOW_AUTOSIZE);
 	//cv::setWindowProperty(winName, cv::WND_PROP_TOPMOST, 1);	
 	cv::setMouseCallback(winName, callback_mouse_click, NULL);
 }
 
-
-int Convert_To_RGB24( float fValue, RGB888Pixel *nRGBData, float fMinValue, float fMaxValue)
+void roboscanPublisher::initialise()
 {
-    if(fValue == ADC_OVERFLOW)
-    {
-        nRGBData->r = 169;//R
-        nRGBData->g = 14;//G
-        nRGBData->b = 255;//B
-    }
-    else if(fValue == SATURATION)
-    {
-        nRGBData->r = 255;//R
-        nRGBData->g = 0;//G
-        nRGBData->b = 128;//B
-    }
-    else if(fValue == INTERFERENCE)
-    {
-        nRGBData->r = 0;//R
-        nRGBData->g = 0;//G
-        nRGBData->b = 0;//B
-    }
-    else if(fValue == 0) //Invalide Pixel
-    {
-        nRGBData->r = 0;//R
-        nRGBData->g = 0;//G
-        nRGBData->b = 0;//B
-    }
-    else if(fValue < fMinValue)
-    {
-        nRGBData->r = 255;//R
-        nRGBData->g = 0;//G
-        nRGBData->b = 0;//B
-    }
-    else if(fValue > fMaxValue)
-    {
-        nRGBData->r = 255;//R
-        nRGBData->g = 0;//G
-        nRGBData->b = 255;//B
-    }
-    else
-    {
-        float fColorWeight;
-        fColorWeight = (fValue-fMinValue) / (fMaxValue-fMinValue);
+    std::cout<<"Init roboscan_nsl3130 node\n"<<std::endl;
+
+    roboscan_nsl3130::RoboscanNSL3130Config cfg =
+        roboscan_nsl3130::RoboscanNSL3130Config::__getDefault__();
+
+
+    load_params(cfg);
+
+    ROS_INFO("Attempting to connect to device at IP: %s", viewerParam.ipAddr.c_str());
+    nsl_handle = nsl_open(viewerParam.ipAddr.c_str(), &nslConfig, NslOption::FUNCTION_OPTIONS::FUNC_ON);
+
+	//viewerParam.netMask = cfg.net_mask;
+	//viewerParam.gwAddr = cfg.gw_addr;
+    nslConfig.hdrOpt = static_cast<NslOption::HDR_OPTIONS>(cfg.hdr_mode);
+    nslConfig.integrationTime3D = cfg.int_0;
+    nslConfig.integrationTime3DHdr1 = cfg.int_1;
+    nslConfig.integrationTime3DHdr2 = cfg.int_2;
+    nslConfig.integrationTimeGrayScale = cfg.int_gr;
+    nslConfig.minAmplitude = cfg.min_amplitude;
+    nslConfig.mod_frequencyOpt = static_cast<NslOption::MODULATION_OPTIONS>(cfg.mod_index);
+    nslConfig.mod_channelOpt = static_cast<NslOption::MODULATION_CH_OPTIONS>(cfg.channel);
+    nslConfig.roiXMin = cfg.roi_left_x;
+    nslConfig.roiYMin = cfg.roi_top_y;
+    nslConfig.roiXMax = cfg.roi_right_x;
+    nslConfig.roiYMax = RIGHTY_MAX;
+    nslConfig.medianOpt = static_cast<NslOption::FUNCTION_OPTIONS>(cfg.median_filter);
+    nslConfig.gaussOpt = static_cast<NslOption::FUNCTION_OPTIONS>(cfg.gaussian_filter);
+    nslConfig.temporalFactorValue = static_cast<int>(cfg.temporal_filter_factor * 1000);
+    nslConfig.temporalThresholdValue = cfg.temporal_filter_threshold;
+    nslConfig.edgeThresholdValue = cfg.edge_filter_threshold;
+    nslConfig.interferenceDetectionLimitValue = cfg.interference_detection_limit;
+    nslConfig.interferenceDetectionLastValueOpt = static_cast<NslOption::FUNCTION_OPTIONS>(cfg.use_last_value);
+    nslConfig.dbModOpt = static_cast<NslOption::DUALBEAM_MOD_OPTIONS>(cfg.dual_beam);
+    nslConfig.dbOpsOpt = static_cast<NslOption::DUALBEAM_OPERATION_OPTIONS>(cfg.dual_beam_option);
+    nslConfig.grayscaleIlluminationOpt = static_cast<NslOption::FUNCTION_OPTIONS>(cfg.grayscale_led);
+    nslConfig.operationModeOpt = static_cast<NslOption::OPERATION_MODE_OPTIONS>(cfg.image_type);
+    nslConfig.lidarAngle = cfg.transform_angle;
+    nslConfig.lensType = static_cast<NslOption::LENS_TYPE>(cfg.lens_type);
 
-        if( (fColorWeight <= 1.0f) && (fColorWeight > 0.8f) )
-        {
-            nRGBData->r = (unsigned char)(255 * ((fColorWeight - 0.8f) / 0.2f));//값에 따라 증가
-            nRGBData->g = 0;
-            nRGBData->b = 255;
-        } 
-        else if( (fColorWeight <= 0.8f) && (fColorWeight > 0.6f) )
-        {
-            nRGBData->r = 0;
-            nRGBData->g = (unsigned char)(255 * (1.0f - (fColorWeight - 0.6f) / 0.2f));//값에 따라 감소
-            nRGBData->b = 255;
-        }
-        else if( (fColorWeight <= 0.6f) && (fColorWeight > 0.4f) )
-        {
-            nRGBData->r = 0;
-            nRGBData->g = 255;
-            nRGBData->b = (unsigned char)(255 * ((fColorWeight - 0.4f) / 0.2f));//값에 따라 증가
-        }
-        else if( (fColorWeight <= 0.4f) && (fColorWeight > 0.2f) )
-        {
-            nRGBData->r = (unsigned char)(255 * (1.0f - (fColorWeight - 0.2f) / 0.2f));//값에 따라 감소
-            nRGBData->g = 255;
-            nRGBData->b = 0;
-        }
-        else if( (fColorWeight <= 0.2f) && (fColorWeight >= 0.0f) )
-        {
-            nRGBData->r = 255;
-            nRGBData->g = (unsigned char)(255 * ((fColorWeight - 0.0f) / 0.2f));//값에 따라 증가
-            nRGBData->b = 0;
-        }
-        else
-        {
-            nRGBData->r = 0;
-            nRGBData->g = 0;
-            nRGBData->b = 0;
-        }
-    }
-
-    return true;
-}
-
-  void getGrayscaleColor(cv::Mat &imageLidar, int x, int y, int value, double end_range )
-  {   
-    if (value == SATURATION)
-    {
-      imageLidar.at<Vec3b>(y, x)[0] = 128;
-      imageLidar.at<Vec3b>(y, x)[1] = 0;
-      imageLidar.at<Vec3b>(y, x)[2] = 255; 
-    }
-    else if (value == ADC_OVERFLOW)
-    {
-      imageLidar.at<Vec3b>(y, x)[0] = 255;
-      imageLidar.at<Vec3b>(y, x)[1] = 14;
-      imageLidar.at<Vec3b>(y, x)[2] = 169; 
-    }
-    else if (value > end_range)
-    {
-      imageLidar.at<Vec3b>(y, x)[0] = 255;
-      imageLidar.at<Vec3b>(y, x)[1] = 255;
-      imageLidar.at<Vec3b>(y, x)[2] = 255; 
-    }
-    else if (value < 0)
-    {
-      imageLidar.at<Vec3b>(y, x)[0] = 0;
-      imageLidar.at<Vec3b>(y, x)[1] = 0;
-      imageLidar.at<Vec3b>(y, x)[2] = 0; 
-    }
-    else
-    {
-      int color = value * (255/end_range);
-
-      //printf("color index = %d\n", color);
-
-      imageLidar.at<Vec3b>(y, x)[0] = color;
-      imageLidar.at<Vec3b>(y, x)[1] = color;
-      imageLidar.at<Vec3b>(y, x)[2] = color; 
-    }
-    ROS_INFO("grayscale");
-}
-
-void setParameters()
-{
-    interface.stopStream();
-//	interface.setUdpPort(0);
-    interface.setMinAmplitude(minAmplitude);
-    interface.setIntegrationTime(int0, int1, int2, intGr);
-
-    interface.setHDRMode((uint8_t)hdr_mode);
-    interface.setFilter(medianFilter, averageFilter, static_cast<uint16_t>(temporalFilterFactor * 1000), temporalFilterThreshold, edgeThreshold,
-                        temporalEdgeThresholdLow, temporalEdgeThresholdHigh, interferenceDetectionLimit, useLastValue);
-
-    interface.setAdcOverflowSaturation(bAdcOverflow, bSaturation);
-    interface.setGrayscaleIlluminationMode(grayscaleIlluminationMode);
-
-
-    
-
-    uint8_t modIndex;
-    if(frequencyModulation == 0) modIndex = 1;
-    else if(frequencyModulation == 1)  modIndex = 0;
-    else if(frequencyModulation == 2)  modIndex = 2;
-    else    modIndex = 3;
-
-    //maxDistance = frequencyModulation == 0 ? 6500.0f : frequencyModulation == 1 ? 12500.0f : frequencyModulation == 2 ? 25000.0f : 50000.0f;
-    interface.setModulation(modIndex, channel);
-    interface.setRoi(roi_leftX, roi_topY, roi_rightX, roi_bottomY);
-	interface.setDualBeam(dual_beam, used_dual_beam_distance);
-
-    if(startStream){
-        if(imageType == Frame::GRAYSCALE) interface.streamGrayscale();
-        else if(imageType == Frame::DISTANCE) interface.streamDistance();
-        else if(imageType == Frame::DISTANCE_AMPLITUDE) interface.streamDistanceAmplitude();
-        else if(imageType == Frame::DCS) interface.streamDCS();
-        else interface.streamDistanceGrayscale();
-
-    }else{
-        interface.stopStream();
-
-    }
-
-    if(old_lensCenterOffsetX != lensCenterOffsetX || old_lensCenterOffsetY != lensCenterOffsetY || old_lensType != lensType){
-        cartesianTransform.initLensTransform(sensorPixelSizeMM, width, height, lensCenterOffsetX, lensCenterOffsetY, lensType);
-        old_lensCenterOffsetX = lensCenterOffsetX;
-        old_lensCenterOffsetY = lensCenterOffsetY;
-        old_lensType = lensType;
-    }
-
-    
-
-//area0
-    if(areaBtn[0])
-        {
-            area0Box.action = visualization_msgs::Marker::ADD;
-            area0Box.scale.x = areaScaleX[0];
-            area0Box.scale.y = areaScaleY[0];
-            area0Box.scale.z = areaScaleZ[0];
-
-            area0Box.pose.position.x = areaScaleX[0] / 2.0 + areaPosX[0];
-            area0Box.pose.position.y = areaPosY[0];
-            area0Box.pose.position.z = areaPosZ[0];
-
-            x_min[0] = areaPosX[0] , x_max[0] = areaPosX[0] + areaScaleX[0] ;
-            y_min[0] = areaPosY[0] - areaScaleY[0] / 2.0, y_max[0] = areaPosY[0] + areaScaleY[0] / 2.0;
-            z_min[0] = areaPosZ[0] - areaScaleZ[0] / 2.0, z_max[0] = areaPosZ[0] + areaScaleZ[0] / 2.0;
-
-        }
-        else
-        {
-            area0Box.action = visualization_msgs::Marker::DELETE;
-            pointCount[0] = 0;
-            pointDetect[0] = false;
-        }
-        
-        if(areaBtn[1])
-        {
-            area1Box.action = visualization_msgs::Marker::ADD;
-            area1Box.scale.x = areaScaleX[1];
-            area1Box.scale.y = areaScaleY[1];
-            area1Box.scale.z = areaScaleZ[1];
-
-            area1Box.pose.position.x = areaScaleX[1] / 2.0 + areaPosX[1];
-            area1Box.pose.position.y = areaPosY[1];
-            area1Box.pose.position.z = areaPosZ[1];
-
-            x_min[1] = areaPosX[1] , x_max[1] = areaPosX[1] + areaScaleX[1] ;
-            y_min[1] = areaPosY[1] - areaScaleY[1] / 2.0, y_max[1] = areaPosY[1] + areaScaleY[1] / 2.0;
-            z_min[1] = areaPosZ[1] - areaScaleZ[1] / 2.0, z_max[1] = areaPosZ[1] + areaScaleZ[1] / 2.0;
-
-        }
-        else
-        {
-            area1Box.action = visualization_msgs::Marker::DELETE;
-            pointCount[1] = 0;
-            pointDetect[1] = false;
-        }
-
-        if(areaBtn[2])
-        {
-            area2Box.action = visualization_msgs::Marker::ADD;
-            area2Box.scale.x = areaScaleX[2];
-            area2Box.scale.y = areaScaleY[2];
-            area2Box.scale.z = areaScaleZ[2];
-
-            area2Box.pose.position.x = areaScaleX[2] / 2.0 + areaPosX[2];
-            area2Box.pose.position.y = areaPosY[2];
-            area2Box.pose.position.z = areaPosZ[2];
-
-            x_min[2] = areaPosX[2] , x_max[2] = areaPosX[2] + areaScaleX[2] ;
-            y_min[2] = areaPosY[2] - areaScaleY[2] / 2.0, y_max[2] = areaPosY[2] + areaScaleY[2] / 2.0;
-            z_min[2] = areaPosZ[2] - areaScaleZ[2] / 2.0, z_max[2] = areaPosZ[2] + areaScaleZ[2] / 2.0;
-        }
-        else
-        {
-            area2Box.action = visualization_msgs::Marker::DELETE;
-            pointCount[2] = 0;
-            pointDetect[2] = false;
-        }            
-
-        if(areaBtn[3])
-        {
-            area3Box.action = visualization_msgs::Marker::ADD;
-            area3Box.scale.x = areaScaleX[3];
-            area3Box.scale.y = areaScaleY[3];
-            area3Box.scale.z = areaScaleZ[3];
-
-            area3Box.pose.position.x = areaScaleX[3] / 2.0 + areaPosX[3];
-            area3Box.pose.position.y = areaPosY[3];
-            area3Box.pose.position.z = areaPosZ[3];
-
-            x_min[3] = areaPosX[3] , x_max[3] = areaPosX[3] + areaScaleX[3] ;
-            y_min[3] = areaPosY[3] - areaScaleY[3] / 2.0, y_max[3] = areaPosY[3] + areaScaleY[3] / 2.0;
-            z_min[3] = areaPosZ[3] - areaScaleZ[3] / 2.0, z_max[3] = areaPosZ[3] + areaScaleZ[3] / 2.0; 
-        }
-        else
-        {
-            area3Box.action = visualization_msgs::Marker::DELETE;
-            pointCount[3] = 0;
-            pointDetect[3] = false;
-        }
-    ros::param::set("camera/set_ip", setIpaddress);
-    ros::param::set("camera/set_subnetmask", setSubnetmask);
-    ros::param::set("camera/set_gateway", setGateway);
-
-    paramSave = true;
-    interface.setIp(setIpaddress,setSubnetmask,setGateway);
-
-
-    if(nanosys::TcpConnection::timerStart == true)
-        timer.start();
-    else
-        timer.stop();
-
-    ROS_INFO("set parameters...");
-
-    ROS_DEBUG("lens_type %d", lensType);
-    ROS_DEBUG("lens_center_offset_x %d", lensCenterOffsetX);
-    ROS_DEBUG("lens_center_offset_y %d", lensCenterOffsetY);
-    ROS_DEBUG("image_type %d", imageType);
-    ROS_DEBUG("start_stream %d", startStream);
-    ROS_DEBUG("hdr_mode %d", hdr_mode);
-    ROS_DEBUG("integration_time0 %d", int0);
-    ROS_DEBUG("integration_time1 %d", int1);
-    ROS_DEBUG("integration_time2 %d", int2);
-    ROS_DEBUG("integration_time_gray %d", intGr);
-    ROS_DEBUG("min_amplitude %d", minAmplitude);
-
-    ROS_DEBUG("frequency_modulation %d", frequencyModulation);
-    ROS_DEBUG("channel %d ", channel);
-    ROS_DEBUG("median_filter %d ", medianFilter);
-    ROS_DEBUG("average_filter %d", averageFilter);
-    ROS_DEBUG("temporal_filter_factor %f", temporalFilterFactor);
-    ROS_DEBUG("temporal_filter_threshold %d ", temporalFilterThreshold);
-    ROS_DEBUG("edge_filter_threshold %d", edgeThreshold);
-    ROS_DEBUG("interference_detection_limit %d ", interferenceDetectionLimit);
-    ROS_DEBUG("use_last_value %d", useLastValue);
-    ROS_DEBUG("cartesian %d", cartesian);
-    ROS_DEBUG("publish_point_cloud %d", publishPointCloud);
-    ROS_DEBUG("roi_left_x %d", roi_leftX);
-    ROS_DEBUG("roi_right_x %d", roi_rightX);
-    ROS_DEBUG("roi_height %d", roi_bottomY - roi_topY);
-    ROS_DEBUG("transform_angle %d", transformAngle);
-    ROS_DEBUG("cut_pixels %d", cutPixels);
-    ROS_DEBUG("cv_show %d", cvShow);
-
-    // Area 0
-    ROS_DEBUG("area_0 : %d", areaBtn[0]);
-    ROS_DEBUG("area_0_length_scale: %f", areaScaleX[0]);
-    ROS_DEBUG("area_0_width_scale: %f", areaScaleY[0]);
-    ROS_DEBUG("area_0_height_scale: %f", areaScaleZ[0]);
-    ROS_DEBUG("area_0_length_position: %f", areaPosX[0]);
-    ROS_DEBUG("area_0_width_position: %f", areaPosY[0]);
-    ROS_DEBUG("area_0_height_position: %f", areaPosZ[0]);
-
-    // Area 1
-    ROS_DEBUG("area_1 : %d", areaBtn[1]);
-    ROS_DEBUG("area_1_length_scale: %f", areaScaleX[1]);
-    ROS_DEBUG("area_1_width_scale: %f", areaScaleY[1]);
-    ROS_DEBUG("area_1_height_scale: %f", areaScaleZ[1]);
-    ROS_DEBUG("area_1_length_position: %f", areaPosX[1]);
-    ROS_DEBUG("area_1_width_position: %f", areaPosY[1]);
-    ROS_DEBUG("area_1_height_position: %f", areaPosZ[1]);
-
-    // Area 2
-    ROS_DEBUG("area_2 : %d", areaBtn[2]);
-    ROS_DEBUG("area_2_length_scale: %f", areaScaleX[2]);
-    ROS_DEBUG("area_2_width_scale: %f", areaScaleY[2]);
-    ROS_DEBUG("area_2_height_scale: %f", areaScaleZ[2]);
-    ROS_DEBUG("area_2_length_position: %f", areaPosX[2]);
-    ROS_DEBUG("area_2_width_position: %f", areaPosY[2]);
-    ROS_DEBUG("area_2_height_position: %f", areaPosZ[2]);
-
-    // Area 3
-    ROS_DEBUG("area_3 : %d", areaBtn[3]);
-    ROS_DEBUG("area_3_length_scale: %f", areaScaleX[3]);
-    ROS_DEBUG("area_3_width_scale: %f", areaScaleY[3]);
-    ROS_DEBUG("area_3_height_scale: %f", areaScaleZ[3]);
-    ROS_DEBUG("area_3_length_position: %f", areaPosX[3]);
-    ROS_DEBUG("area_3_width_position: %f", areaPosY[3]);
-    ROS_DEBUG("area_3_height_position: %f", areaPosZ[3]);
-
-    ROS_DEBUG("point_limit : %d", pointLimit[0]);
-    ROS_DEBUG("point_limit : %d", pointLimit[1]);
-    ROS_DEBUG("point_limit : %d", pointLimit[2]);
-    ROS_DEBUG("point_limit : %d", pointLimit[3]);
-    
-}
-
-
-
-void updateConfig(roboscan_nsl3130::roboscan_nsl3130Config &config, uint32_t level)
-{
-    startStream = config.start_stream;
-    lensType = config.lens_type;
-    lensCenterOffsetX = config.lens_center_offset_x;
-    lensCenterOffsetY = config.lens_center_offset_y;
-    imageType = config.image_type;    
-    minAmplitude = config.min_amplitude;
-    hdr_mode = config.hdr_mode;
-    int0 = config.integration_time_tof_1;
-    int1 = config.integration_time_tof_2;
-    int2 = config.integration_time_tof_3;
-    intGr = config.integration_time_gray; //grayscale integration time
-    frequencyModulation = config.frequency_modulation;
-    channel = config.channel;
-    medianFilter = config.median_filter;
-    averageFilter = config.average_filter;
-    temporalFilterFactor = config.temporal_filter_factor;
-    temporalFilterThreshold = static_cast<uint16_t>(config.temporal_filter_threshold);
-    edgeThreshold = static_cast<uint16_t>(config.edge_filter_threshold);
-    interferenceDetectionLimit = static_cast<uint16_t>(config.interference_detection_limit);
-    useLastValue = config.use_last_value;
-    cartesian = config.cartesian;
-    publishPointCloud = config.publish_point_cloud;
-
-    
-
-    
-    
-    transformAngle = config.transform_angle;
-    cutPixels = config.cut_pixels;
-	maxDistance = config.max_distance;
-
-	dual_beam = config.dual_beam;
-	used_dual_beam_distance = config.dual_beam_dist;
-
-    setIpaddress = config.set_ip;
-    setSubnetmask = config.set_subnetmask;
-    setGateway = config.set_gateway;
-
-	setWinName(config.cvShow);
-    
-
-    //Area
-    areaBtn[0] = config.area0;
-    areaScaleX[0] = config.a0_length_scale;
-    areaScaleY[0] = config.a0_width_scale;
-    areaScaleZ[0] = config.a0_height_scale;
-
-    areaPosX[0] = config.a0_length_position;
-    areaPosY[0] = config.a0_width_position;
-    areaPosZ[0] = config.a0_height_position;
-
-
-    areaBtn[1] = config.area1;
-    areaScaleX[1] = config.a1_length_scale;
-    areaScaleY[1] = config.a1_width_scale;
-    areaScaleZ[1] = config.a1_height_scale;
-
-    areaPosX[1] = config.a1_length_position;
-    areaPosY[1] = config.a1_width_position;
-    areaPosZ[1] = config.a1_height_position;
-
-    
-    areaBtn[2] = config.area2;
-    areaScaleX[2] = config.a2_length_scale;
-    areaScaleY[2] = config.a2_width_scale;
-    areaScaleZ[2] = config.a2_height_scale;
-    
-    areaPosX[2] = config.a2_length_position;
-    areaPosY[2] = config.a2_width_position;
-    areaPosZ[2] = config.a2_height_position;
-
-    areaBtn[3] = config.area3;
-    areaScaleX[3] = config.a3_length_scale;
-    areaScaleY[3] = config.a3_width_scale;
-    areaScaleZ[3] = config.a3_height_scale;
-    
-    areaPosX[3] = config.a3_length_position;
-    areaPosY[3] = config.a3_width_position;
-    areaPosZ[3] = config.a3_height_position;
-
-    pointLimit[0] = config.a0_point_limit;
-    pointLimit[1] = config.a1_point_limit;
-    pointLimit[2] = config.a2_point_limit;
-    pointLimit[3] = config.a3_point_limit;
-
-
-   
-
-    //add
-    grayscaleIlluminationMode = 1;
-    bAdcOverflow = 1;
-    bSaturation = 1;
-
-
-	if( config.roi_left_x != roi_leftX ){
-		int x1_tmp = config.roi_left_x;
-
-		if(x1_tmp % X_INTERVAL ) x1_tmp+=X_INTERVAL-(x1_tmp % X_INTERVAL );
-		if(x1_tmp > LEFTX_MAX ) x1_tmp = LEFTX_MAX;
-
-		config.roi_left_x = roi_leftX = x1_tmp;
-	}
 	
-	if( config.roi_right_x != roi_rightX ){
-		int x2_tmp = config.roi_right_x;
+    if (nsl_handle >= 0)
+    {
+        ROS_INFO("Successfully connected. Reading settings from the device.");
+
+		nsl_setMinAmplitude(nsl_handle, nslConfig.minAmplitude);
+		nsl_setIntegrationTime(nsl_handle, nslConfig.integrationTime3D, nslConfig.integrationTime3DHdr1, nslConfig.integrationTime3DHdr2, nslConfig.integrationTimeGrayScale);
+		nsl_setHdrMode(nsl_handle, nslConfig.hdrOpt);
+		nsl_setFilter(nsl_handle, nslConfig.medianOpt, nslConfig.gaussOpt, nslConfig.temporalFactorValue, nslConfig.temporalThresholdValue, nslConfig.edgeThresholdValue, nslConfig.interferenceDetectionLimitValue, nslConfig.interferenceDetectionLastValueOpt);
+		nsl_set3DFilter(nsl_handle, viewerParam.pointCloudEdgeThreshold);
+		nsl_setAdcOverflowSaturation(nsl_handle, nslConfig.overflowOpt, nslConfig.saturationOpt);
+		nsl_setDualBeam(nsl_handle, nslConfig.dbModOpt, nslConfig.dbOpsOpt);
+		nsl_setModulation(nsl_handle, nslConfig.mod_frequencyOpt, nslConfig.mod_channelOpt, NslOption::FUNCTION_OPTIONS::FUNC_OFF);
+		nsl_setRoi(nsl_handle, nslConfig.roiXMin, nslConfig.roiYMin, nslConfig.roiXMax, nslConfig.roiYMax);
+		nsl_setGrayscaleillumination(nsl_handle, nslConfig.grayscaleIlluminationOpt);
 		
-		if((x2_tmp-RIGHTX_MIN) % X_INTERVAL)	x2_tmp-=((x2_tmp-RIGHTX_MIN) % X_INTERVAL);
-		if(x2_tmp < RIGHTX_MIN ) x2_tmp = RIGHTX_MIN;
-		if(x2_tmp > RIGHTX_MAX ) x2_tmp = RIGHTX_MAX;
+        cfg.hdr_mode = static_cast<int>(nslConfig.hdrOpt);
+        cfg.int_0 = nslConfig.integrationTime3D;
+        cfg.int_1 = nslConfig.integrationTime3DHdr1;
+        cfg.int_2 = nslConfig.integrationTime3DHdr2;
+        cfg.int_gr = nslConfig.integrationTimeGrayScale;
+        cfg.min_amplitude = nslConfig.minAmplitude;
+        cfg.mod_index = static_cast<int>(nslConfig.mod_frequencyOpt);
+        cfg.channel = static_cast<int>(nslConfig.mod_channelOpt);
+        cfg.roi_left_x = nslConfig.roiXMin;
+        cfg.roi_top_y = nslConfig.roiYMin;
+        cfg.roi_right_x = nslConfig.roiXMax;
+        cfg.median_filter = (nslConfig.medianOpt == NslOption::FUNCTION_OPTIONS::FUNC_ON);
+        cfg.gaussian_filter = (nslConfig.gaussOpt == NslOption::FUNCTION_OPTIONS::FUNC_ON);
+        cfg.temporal_filter_factor = std::max(0, std::min(1000, nslConfig.temporalFactorValue)) / 1000.0;
+        cfg.temporal_filter_threshold = nslConfig.temporalThresholdValue;
+        cfg.edge_filter_threshold = nslConfig.edgeThresholdValue;
+        cfg.interference_detection_limit = nslConfig.interferenceDetectionLimitValue;
+        cfg.use_last_value = (nslConfig.interferenceDetectionLastValueOpt == NslOption::FUNCTION_OPTIONS::FUNC_ON);
+        cfg.dual_beam = static_cast<int>(nslConfig.dbModOpt);
+        cfg.dual_beam_option = static_cast<int>(nslConfig.dbOpsOpt);
+        cfg.grayscale_led = (nslConfig.grayscaleIlluminationOpt == NslOption::FUNCTION_OPTIONS::FUNC_ON);
 
-		config.roi_right_x = roi_rightX = x2_tmp;
-	}
-
-	if( config.roi_left_y != roi_topY ){
-	    int y1_tmp = config.roi_left_y;
-
-	    if(y1_tmp % Y_INTERVAL )	y1_tmp++;
-	    if(y1_tmp > LEFTY_MAX ) y1_tmp = LEFTY_MAX;
-
-		config.roi_left_y = roi_topY = y1_tmp;
-
-		int y2_tmp = RIGHTY_MAX - y1_tmp;
-		config.roi_right_y = roi_bottomY = y2_tmp;
-	}
-
-	if( config.roi_right_y != roi_bottomY ){
-	    int y2_tmp = config.roi_right_y;
-
-		if(y2_tmp % Y_INTERVAL == 0 )	y2_tmp++;
-		if(y2_tmp < RIGHTY_MIN ) y2_tmp = RIGHTY_MIN;
-		if(y2_tmp > RIGHTY_MAX ) y2_tmp = RIGHTY_MAX;
-
-		config.roi_right_y = roi_bottomY = y2_tmp;
-
-	    int y1_tmp = RIGHTY_MAX - y2_tmp;
-		config.roi_left_y = roi_topY = y1_tmp;
-	}
-  
-
-	//printf("x = %d y = %d width = %d height = %d\n", roi_leftX, roi_topY, roi_rightX, roi_bottomY);
-    
-    setParameters();  
-    
-
-
-}
-
-
-bool setCameraInfo(sensor_msgs::SetCameraInfo::Request& req, sensor_msgs::SetCameraInfo::Response& res)
-{
-    req.camera_info.width  = cameraInfo.width;
-    req.camera_info.height = cameraInfo.height;
-    req.camera_info.roi    = cameraInfo.roi;
-
-    cameraInfoPublisher.publish(req.camera_info);
-
-    res.success = true;
-    res.status_message = "";
-    return true;
-}
-
-void startStreaming()
-{
-    ROS_INFO("startStream");
-    switch(imageType) {
-    case Frame::GRAYSCALE:
-        interface.streamGrayscale();
-        ROS_INFO("streaming grayscale");
-        break;
-    case Frame::DISTANCE:
-        interface.streamDistance();
-        ROS_INFO("streaming distance");
-        break;
-    case Frame::DISTANCE_AMPLITUDE:
-        interface.streamDistanceAmplitude();
-        ROS_INFO("streaming distance-amplitude");
-        break;
-    case Frame::DISTANCE_GRAYSCALE:
-        interface.streamDistanceGrayscale();
-        ROS_INFO("streaming distance-grayscale");
-        break;
-    case Frame::DISTANCE_AMPLITUDE_GRAYSCALE:
-        interface.streamDistanceAmplitudeGrayscale();
-        ROS_INFO("streaming distance-amplitude-grayscale");
-        break;
-    case Frame::DCS:
-        interface.streamDCS();
-        
-        break;
-    default:
-        break;
+		startStreaming();
     }
+    else
+    {
+        ROS_WARN("Failed to connect to the device. Falling back to settings from lidar_params.yaml");
+		viewerParam.ipAddr = cfg.ip_addr;
+		viewerParam.frame_id = cfg.frame_id;
+		viewerParam.maxDistance = cfg.max_distance;
+		viewerParam.pointCloudEdgeThreshold = cfg.pointcloud_edge;
+		viewerParam.imageType = cfg.image_type;
+		viewerParam.lensType = cfg.lens_type;
+		viewerParam.lidarAngle = cfg.transform_angle;
+		viewerParam.cvShow = cfg.cv_show;
+    }   
 
+    setWinName();
+    viewerParam.saveParam = false;
+    reconfigure = false;
+
+
+    if (dr_server_) { 
+        dr_server_->updateConfig(cfg);
+    }
+    
+    ROS_INFO("end initialise()\n");
+}
+
+void roboscanPublisher::startStreaming()
+{	
+	if( viewerParam.imageType == static_cast<int>(OPERATION_MODE_OPTIONS::DISTANCE_MODE)){
+		nsl_streamingOn(nsl_handle, OPERATION_MODE_OPTIONS::DISTANCE_MODE);
+	}
+	else if( viewerParam.imageType == static_cast<int>(OPERATION_MODE_OPTIONS::GRAYSCALE_MODE)){
+		nsl_setColorRange(viewerParam.maxDistance, MAX_GRAYSCALE_VALUE, NslOption::FUNCTION_OPTIONS::FUNC_ON);
+		nsl_streamingOn(nsl_handle, OPERATION_MODE_OPTIONS::GRAYSCALE_MODE);
+	}
+	else if( viewerParam.imageType == static_cast<int>(OPERATION_MODE_OPTIONS::DISTANCE_AMPLITUDE_MODE)){
+		nsl_setColorRange(viewerParam.maxDistance, MAX_GRAYSCALE_VALUE, NslOption::FUNCTION_OPTIONS::FUNC_OFF);
+		nsl_streamingOn(nsl_handle, OPERATION_MODE_OPTIONS::DISTANCE_AMPLITUDE_MODE);
+	}
+	else if( viewerParam.imageType == static_cast<int>(OPERATION_MODE_OPTIONS::DISTANCE_GRAYSCALE_MODE)){
+		nsl_setColorRange(viewerParam.maxDistance, MAX_GRAYSCALE_VALUE, NslOption::FUNCTION_OPTIONS::FUNC_ON);
+		nsl_streamingOn(nsl_handle, OPERATION_MODE_OPTIONS::DISTANCE_GRAYSCALE_MODE);
+	}
+	else if( viewerParam.imageType == static_cast<int>(OPERATION_MODE_OPTIONS::RGB_MODE)){
+		nsl_streamingOn(nsl_handle, OPERATION_MODE_OPTIONS::RGB_MODE);
+	}
+	else if( viewerParam.imageType == static_cast<int>(OPERATION_MODE_OPTIONS::RGB_DISTANCE_MODE)){
+		nsl_streamingOn(nsl_handle, OPERATION_MODE_OPTIONS::RGB_DISTANCE_MODE);
+	}
+	else if( viewerParam.imageType == static_cast<int>(OPERATION_MODE_OPTIONS::RGB_DISTANCE_AMPLITUDE_MODE)){
+		nsl_setColorRange(viewerParam.maxDistance, MAX_GRAYSCALE_VALUE, NslOption::FUNCTION_OPTIONS::FUNC_OFF);
+		nsl_streamingOn(nsl_handle, OPERATION_MODE_OPTIONS::RGB_DISTANCE_AMPLITUDE_MODE);
+	}
+	else if( viewerParam.imageType == static_cast<int>(OPERATION_MODE_OPTIONS::RGB_DISTANCE_GRAYSCALE_MODE)){
+		nsl_setColorRange(viewerParam.maxDistance, MAX_GRAYSCALE_VALUE, NslOption::FUNCTION_OPTIONS::FUNC_ON);
+		nsl_streamingOn(nsl_handle, OPERATION_MODE_OPTIONS::RGB_DISTANCE_GRAYSCALE_MODE);
+	}
+	else{
+		std::cout << "operation mode NONE~~~"<< std::endl;
+	}
 }
 
 
-void updateCameraInfo(std::shared_ptr<CameraInfo> ci)
-{
-    cameraInfo.width = ci->width;
-    cameraInfo.height = ci->height;
-    cameraInfo.roi.x_offset = ci->roiX0;
-    cameraInfo.roi.y_offset = ci->roiY0;
-    cameraInfo.roi.width = ci->roiX1 - ci->roiX0;
-    cameraInfo.roi.height = ci->roiY1 - ci->roiY0;
-}
-
-
-cv::Mat addDistanceInfo(cv::Mat distMat, std::shared_ptr<Frame> frame)
+cv::Mat roboscanPublisher::addDistanceInfo(cv::Mat distMat, NslPCD *frame)
 {
 	int xpos = mouseXpos;
 	int ypos = mouseYpos;
 	
 	if( (ypos > 0 && ypos < frame->height)){
-		// mouseXpos, mouseYpos
-		cv::Mat infoImage(50, distMat.cols, CV_8UC3, Scalar(255, 255, 255));
 
-		cv::line(distMat, cv::Point(xpos-10, ypos), cv::Point(xpos+10, ypos), cv::Scalar(255, 255, 0), 2);
-		cv::line(distMat, cv::Point(xpos, ypos-10), cv::Point(xpos, ypos+10), cv::Scalar(255, 255, 0), 2);
+		Mat infoImage(DISTANCE_INFO_HEIGHT, distMat.cols, CV_8UC3, Scalar(255, 255, 255)); 
 
-		if( xpos >= frame->width*2 ){
-			xpos -= frame->width*2;
-		}
-		else if( xpos >= frame->width ){
+		line(distMat, Point(xpos-10, ypos), Point(xpos+10, ypos), Scalar(255, 255, 0), 2);
+		line(distMat, Point(xpos, ypos-10), Point(xpos, ypos+10), Scalar(255, 255, 0), 2);
+		if( xpos >= frame->width ){ 
 			xpos -= frame->width;
 		}
 
-		std::string dist_caption;
+		string dist2D_caption;
+		string dist3D_caption;
+		string info_caption;
 
-		int real_xpos = xpos;
-		int real_dist = frame->dist2BData[ypos*frame->width + real_xpos];
-		if( real_dist > PIXEL_VALID_DATA ){
-
-			if( real_dist == ADC_OVERFLOW )
-				dist_caption = cv::format("X:%d,Y:%d ADC_OVERFLOW", xpos, ypos);
-			else if( real_dist == SATURATION )
-				dist_caption = cv::format("X:%d,Y:%d SATURATION", xpos, ypos);
-			else if( real_dist == BAD_PIXEL )
-				dist_caption = cv::format("X:%d,Y:%d BAD_PIXEL", xpos, ypos);
-			else if( real_dist == INTERFERENCE )
-				dist_caption = cv::format("X:%d,Y:%d INTERFERENCE", xpos, ypos);
-			else if( real_dist == EDGE_FILTERED )
-				dist_caption = cv::format("X:%d,Y:%d EDGE_FILTERED", xpos, ypos);
+        int distance2D = frame->distance2D[ypos][xpos]; 
+		if( distance2D > NSL_LIMIT_FOR_VALID_DATA ){
+			if( distance2D == NSL_ADC_OVERFLOW )
+				dist2D_caption = format("X:%d,Y:%d ADC_OVERFLOW", xpos, ypos);
+			else if( distance2D == NSL_SATURATION )
+				dist2D_caption = format("X:%d,Y:%d SATURATION", xpos, ypos);
+			else if( distance2D == NSL_BAD_PIXEL )
+				dist2D_caption = format("X:%d,Y:%d BAD_PIXEL", xpos, ypos);
+			else if( distance2D == NSL_INTERFERENCE )
+				dist2D_caption = format("X:%d,Y:%d INTERFERENCE", xpos, ypos);
+			else if( distance2D == NSL_EDGE_DETECTED )
+				dist2D_caption = format("X:%d,Y:%d EDGE_FILTERED", xpos, ypos);
 			else
-				dist_caption = cv::format("X:%d,Y:%d LOW_AMPLITUDE", xpos, ypos);
+				dist2D_caption = format("X:%d,Y:%d LOW_AMPLITUDE", xpos, ypos);
 		}
 		else{
-			if( frame->dataType == Frame::DISTANCE_AMPLITUDE ) dist_caption = cv::format("X:%d,Y:%d %dmm/%dlsb", xpos, ypos, frame->dist2BData[ypos*frame->width + real_xpos], frame->ampl2BData[ypos*frame->width + real_xpos]);
-			else if( frame->dataType == Frame::DISTANCE_GRAYSCALE ) dist_caption = cv::format("X:%d,Y:%d %dmm/%dlsb", xpos, ypos, frame->dist2BData[ypos*frame->width + real_xpos], frame->gray2BData[ypos*frame->width + real_xpos]);
-			else if( frame->dataType == Frame::DISTANCE_AMPLITUDE_GRAYSCALE ) dist_caption = cv::format("X:%d,Y:%d %dmm/%dlsb/%dlsb", xpos, ypos, frame->dist2BData[ypos*frame->width + real_xpos], frame->ampl2BData[ypos*frame->width + real_xpos], frame->gray2BData[ypos*frame->width + real_xpos]);
-			else if( frame->dataType == Frame::GRAYSCALE )	dist_caption = cv::format("X:%d,Y:%d %dlsb", xpos, ypos, frame->gray2BData[ypos*frame->width + real_xpos]);
-			else	dist_caption = cv::format("X:%d,Y:%d %dmm", xpos, ypos, frame->dist2BData[ypos*frame->width + real_xpos]);
-		}
+			if( frame->operationMode == OPERATION_MODE_OPTIONS::DISTANCE_AMPLITUDE_MODE || frame->operationMode == OPERATION_MODE_OPTIONS::RGB_DISTANCE_AMPLITUDE_MODE ) {
+				dist2D_caption = format("2D X:%d Y:%d %dmm/%dlsb", xpos, ypos, frame->distance2D[ypos][xpos], frame->amplitude[ypos][xpos]);
+				dist3D_caption = format("3D X:%.1fmm Y:%.1fmm Z:%.1fmm", frame->distance3D[OUT_X][ypos][xpos], frame->distance3D[OUT_Y][ypos][xpos], frame->distance3D[OUT_Z][ypos][xpos]);
 
-		putText(infoImage, dist_caption.c_str(), cv::Point(10, 30), cv::FONT_HERSHEY_COMPLEX, 1, cv::Scalar(0, 0, 0));
-		cv::vconcat(distMat, infoImage, distMat);
-	}
-	else{
-		cv::Mat infoImage(50, distMat.cols, CV_8UC3, Scalar(255, 255, 255));
-		cv::vconcat(distMat, infoImage, distMat);
-	}
-	return distMat;
-}
-
-cv::Mat addDCSInfo(cv::Mat distMat, std::shared_ptr<Frame> frame)
-{
-	int xpos = mouseXpos;
-	int ypos = mouseYpos;
-	
-	if( (ypos > 0 && ypos < frame->height*2)){
-		// mouseXpos, mouseYpos
-		cv::Mat infoImage(50, distMat.cols, CV_8UC3, Scalar(255, 255, 255));
-
-		cv::line(distMat, cv::Point(xpos-10, ypos), cv::Point(xpos+10, ypos), cv::Scalar(255, 255, 0), 2);
-		cv::line(distMat, cv::Point(xpos, ypos-10), cv::Point(xpos, ypos+10), cv::Scalar(255, 255, 0), 2);
-
-		if( xpos >= frame->width ){
-			xpos -= frame->width;
-		}
-
-		if( ypos >= frame->height ){
-			ypos -= frame->height;
-		}
-
-		std::string dist_caption;
-
-		int real_xpos = xpos;
-		int real_dist = frame->dcs2BData[ypos*frame->width + real_xpos];
-		if( real_dist > PIXEL_VALID_DATA ){
-
-			if( real_dist == ADC_OVERFLOW )
-				dist_caption = cv::format("X:%d,Y:%d ADC_OVERFLOW", xpos, ypos);
-			else if( real_dist == SATURATION )
-				dist_caption = cv::format("X:%d,Y:%d SATURATION", xpos, ypos);
-			else if( real_dist == BAD_PIXEL )
-				dist_caption = cv::format("X:%d,Y:%d BAD_PIXEL", xpos, ypos);
-			else if( real_dist == INTERFERENCE )
-				dist_caption = cv::format("X:%d,Y:%d INTERFERENCE", xpos, ypos);
-			else if( real_dist == EDGE_FILTERED )
-				dist_caption = cv::format("X:%d,Y:%d EDGE_FILTERED", xpos, ypos);
-			else
-				dist_caption = cv::format("X:%d,Y:%d LOW_AMPLITUDE", xpos, ypos);
-		}
-		else{
-			dist_caption = cv::format("X:%d,Y:%d %d/%d/%d/%d", xpos, ypos
-										, frame->dcs2BData[ypos*frame->width + real_xpos]
-										, frame->dcs2BData[(frame->width*frame->height) + ypos*frame->width + real_xpos]
-										, frame->dcs2BData[(frame->width*frame->height * 2) + ypos*frame->width + real_xpos]
-										, frame->dcs2BData[(frame->width*frame->height * 3) + ypos*frame->width + real_xpos]);
-		}
-
-		putText(infoImage, dist_caption.c_str(), cv::Point(10, 30), cv::FONT_HERSHEY_COMPLEX, 1, cv::Scalar(0, 0, 0));
-		cv::vconcat(distMat, infoImage, distMat);
-	}
-	else{
-		cv::Mat infoImage(50, distMat.cols, CV_8UC3, Scalar(255, 255, 255));
-		cv::vconcat(distMat, infoImage, distMat);
-	}
-	return distMat;
-}
-
-
-
-void setAmplitudeColor(cv::Mat &imageLidar, int x, int y, int value, double end_range )
-{
-	if( value == LOW_AMPLITUDE )
-	{
-		imageLidar.at<Vec3b>(y, x)[0] = 0;
-		imageLidar.at<Vec3b>(y, x)[1] = 0;
-		imageLidar.at<Vec3b>(y, x)[2] = 0; 
-	}
-	else if (value == SATURATION)
-	{
-		imageLidar.at<Vec3b>(y, x)[0] = 128;
-		imageLidar.at<Vec3b>(y, x)[1] = 0;
-		imageLidar.at<Vec3b>(y, x)[2] = 255; 
-	}
-	else if (value == ADC_OVERFLOW)
-	{
-		imageLidar.at<Vec3b>(y, x)[0] = 255;
-		imageLidar.at<Vec3b>(y, x)[1] = 14;
-		imageLidar.at<Vec3b>(y, x)[2] = 169; 
-	}
-	else if(value == BAD_PIXEL)
-	{
-		imageLidar.at<Vec3b>(y, x)[0] = 0;
-		imageLidar.at<Vec3b>(y, x)[1] = 0;
-		imageLidar.at<Vec3b>(y, x)[2] = 0; 
-	}
-	else if(value == 0)
-	{
-		imageLidar.at<Vec3b>(y, x) = colorVector.at(0);
-	}
-	else if (value < 0)
-	{
-		imageLidar.at<Vec3b>(y, x)[0] = 0;
-		imageLidar.at<Vec3b>(y, x)[1] = 0;
-		imageLidar.at<Vec3b>(y, x)[2] = 0; 
-	}
-	else if (value > end_range)
-	{
-		imageLidar.at<Vec3b>(y, x)[0] = 0;
-		imageLidar.at<Vec3b>(y, x)[1] = 0;
-		imageLidar.at<Vec3b>(y, x)[2] = 0; 
-	}
-	else{
-		int index = value * (NUM_COLORS / end_range);
-		if( index < 0 ){
-			printf("error index = %d\n", index);
-			index = 0;
-		}
-		else if( index >= (int)colorVector.size() ){
-			index = colorVector.size()-1;
-		}
-		
-		imageLidar.at<Vec3b>(y, x) = colorVector.at(index);
-	}
-}
-
-
-void setGrayscaleColor(cv::Mat &imageLidar, int x, int y, int value, double end_range )
-{   
-	if (value == SATURATION)
-	{
-		imageLidar.at<Vec3b>(y, x)[0] = 128;
-		imageLidar.at<Vec3b>(y, x)[1] = 0;
-		imageLidar.at<Vec3b>(y, x)[2] = 255; 
-	}
-	else if (value == ADC_OVERFLOW)
-	{
-		imageLidar.at<Vec3b>(y, x)[0] = 255;
-		imageLidar.at<Vec3b>(y, x)[1] = 14;
-		imageLidar.at<Vec3b>(y, x)[2] = 169; 
-	}
-	else if (value > end_range)
-	{
-		imageLidar.at<Vec3b>(y, x)[0] = 255;
-		imageLidar.at<Vec3b>(y, x)[1] = 255;
-		imageLidar.at<Vec3b>(y, x)[2] = 255; 
-	}
-	else if (value < 0)
-	{
-		imageLidar.at<Vec3b>(y, x)[0] = 0;
-		imageLidar.at<Vec3b>(y, x)[1] = 0;
-		imageLidar.at<Vec3b>(y, x)[2] = 0; 
-	}
-	else
-	{
-		int color = value * (255/end_range);
-
-		//printf("color index = %d\n", color);
-
-		imageLidar.at<Vec3b>(y, x)[0] = color;
-		imageLidar.at<Vec3b>(y, x)[1] = color;
-		imageLidar.at<Vec3b>(y, x)[2] = color; 
-	}
-}
-
-
-
-
-void updateFrame(std::shared_ptr<Frame> frame)
-{
-    int x, y, k, l, pc;
-    //cv::Mat imageLidar(height, width, CV_8UC3, Scalar(255, 255, 255));
-	cv::Mat dcs1(frame->height, frame->width, CV_8UC3, Scalar(255, 255, 255));	// distance
-	cv::Mat dcs2(frame->height, frame->width, CV_8UC3, Scalar(255, 255, 255));	// amplitude
-	cv::Mat dcs3(frame->height, frame->width, CV_8UC3, Scalar(255, 255, 255));	// garycale
-	cv::Mat dcs4(frame->height, frame->width, CV_8UC3, Scalar(255, 255, 255));
-
-//	printf("width = %d, height = %d roi_topY = %d\n", frame->width, frame->height, roi_topY);
-
-    if(frame->dataType == Frame::DISTANCE || frame->dataType == Frame::DISTANCE_AMPLITUDE || frame->dataType == Frame::DISTANCE_GRAYSCALE || frame->dataType == Frame::DISTANCE_AMPLITUDE_GRAYSCALE ){
-        sensor_msgs::Image imgDistance;
-        imgDistance.header.seq = frameSeq++;
-        imgDistance.header.stamp = ros::Time::now();
-        imgDistance.header.frame_id = "roboscan_frame";
-        imgDistance.height = static_cast<uint32_t>(frame->height);
-        imgDistance.width = static_cast<uint32_t>(frame->width);
-        imgDistance.encoding = sensor_msgs::image_encodings::MONO16;
-        imgDistance.step = imgDistance.width * frame->px_size;
-        imgDistance.is_bigendian = 0;
-        imgDistance.data = frame->distData;
-        distanceImagePublisher.publish(imgDistance);
-    }
-
-    if(frame->dataType == Frame::DISTANCE_AMPLITUDE || frame->dataType == Frame::DISTANCE_GRAYSCALE || frame->dataType == Frame::DISTANCE_AMPLITUDE_GRAYSCALE){
-        sensor_msgs::Image imgAmpl;
-        imgAmpl.header.seq = frameSeq;
-        imgAmpl.header.stamp = ros::Time::now();
-        imgAmpl.header.frame_id = "roboscan_frame";
-        imgAmpl.height = static_cast<uint32_t>(frame->height);
-        imgAmpl.width = static_cast<uint32_t>(frame->width);
-        imgAmpl.encoding = sensor_msgs::image_encodings::MONO16;
-        imgAmpl.step = imgAmpl.width * frame->px_size;
-        imgAmpl.is_bigendian = 0;
-        imgAmpl.data = frame->amplData;
-        amplitudeImagePublisher.publish(imgAmpl);
-    }
-
-    if(frame->dataType == Frame::DISTANCE_AMPLITUDE_GRAYSCALE){
-        sensor_msgs::Image imgGray;
-        imgGray.header.seq = frameSeq;
-        imgGray.header.stamp = ros::Time::now();
-        imgGray.header.frame_id = "roboscan_frame";
-        imgGray.height = static_cast<uint32_t>(frame->height);
-        imgGray.width = static_cast<uint32_t>(frame->width);
-        imgGray.encoding = sensor_msgs::image_encodings::MONO16;
-        imgGray.step = imgGray.width * frame->px_size;
-        imgGray.is_bigendian = 0;
-        imgGray.data = frame->grayData;
-        grayImagePublisher.publish(imgGray);
-    }
-
-    if(frame->dataType == Frame::DCS){
-        sensor_msgs::Image imgDCS;
-        imgDCS.header.seq = frameSeq;
-        imgDCS.header.stamp = ros::Time::now();
-        imgDCS.header.frame_id = "roboscan_frame";
-        imgDCS.height = static_cast<uint32_t>(frame->height) * 4;
-        imgDCS.width = static_cast<uint32_t>(frame->width);
-        imgDCS.encoding = sensor_msgs::image_encodings::MONO16;
-        imgDCS.step = imgDCS.width * frame->px_size;
-        imgDCS.is_bigendian = 0;
-        imgDCS.data = frame->dcsData;
-        dcsImagePublisher.publish(imgDCS);
-    }
-    
-    if(frame->dataType == Frame::GRAYSCALE){
-      uint16_t gray; 
-      for(k=0, l=0, y=0; y< frame->height; y++){
-        for(x=0; x< frame->width; x++, k++, l+=2){
-          gray = (frame->amplData[l+1] << 8)  + frame->amplData[l];
-          getGrayscaleColor(dcs1, x, y, gray, 255);
-
-        }
-      }
-    }
-
-    if(publishPointCloud && frame->dataType != Frame::GRAYSCALE){
-
-        cv_bridge::CvImagePtr cv_ptr(new cv_bridge::CvImage);
-
-        const size_t nPixel = frame->width * frame->height;
-#ifdef USED_INTENSITY
-        pcl::PointCloud<pcl::PointXYZI>::Ptr cloud(new pcl::PointCloud<pcl::PointXYZI>());
-#else
-        pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud(new pcl::PointCloud<pcl::PointXYZRGB>());
-#endif        
-        cloud->header.frame_id = "roboscan_frame";
-        cloud->header.stamp = pcl_conversions::toPCL(ros::Time::now());
-        cloud->width = static_cast<uint32_t>(frame->width);
-        cloud->height = static_cast<uint32_t>(frame->height);
-        cloud->is_dense = false;
-        cloud->points.resize(nPixel);
-
-        uint16_t distance = 0;
-        uint16_t amplitude = 0;
-		uint16_t grayscale = 0;
-        double px, py, pz;
-
-        RGB888Pixel* pTex = new RGB888Pixel[1];
-
-
-        //2d scan
-        sensor_msgs::LaserScan scan;
-        scan.header.stamp = ros::Time::now();
-        scan.header.frame_id = "roboscan_frame"; //laser_frame
-        //scan.angle_min = -0.959931; //110xPI/180=1.919862 -> 45xPI/180=0.785  
-        //scan.angle_max = 0.959931;
-        //scan.angle_increment = 1.919862 / num_readings; //3.14 / num_readings;      
-        scan.angle_min = -0.942477; //90xPI/180=-1.57 -> 45xPI/180=0.785  
-        scan.angle_max = 0.942477;
-        scan.angle_increment = 1.884955 / num_readings; //3.14 / num_readings;      
-        
-        scan.time_increment = (1 / laser_frequency) / (num_readings);
-        scan.range_min = 0.0;
-        scan.range_max = 1250.0;        
-        //
-        scan.ranges.resize(num_readings);
-        scan.intensities.resize(num_readings);
-
-        pointCount[0] = 0;
-        pointCount[1] = 0;
-        pointCount[2] = 0;
-        pointCount[3] = 0;
-
-        for(k=0, l=0, y=0; y< frame->height; y++){
-            for(x=0, pc = frame->width-1; x< frame->width; x++, k++, l+=2, pc--){
-#ifdef USED_INTENSITY
-                pcl::PointXYZI &p = cloud->points[k];
-#else
-                pcl::PointXYZRGB &p = cloud->points[k];
-#endif
-
-
-                distance = (frame->distData[l+1] << 8) + frame->distData[l];
-                amplitude = (frame->amplData[l+1] << 8)  + frame->amplData[l];
-				grayscale = (frame->grayData[l+1] << 8)  + frame->grayData[l];
-
-                //distance 
-                if(distance == LOW_AMPLITUDE || distance == INTERFERENCE || distance == EDGE_FILTERED){
-                    distance = 0;              
-					amplitude = 0;
-                }
-				else if(!(y > -x + cutPixels
-	                    && y > x - (319-cutPixels)
-	                    && y < x + (239-cutPixels)
-	                    && y < -x + cutPixels + (239-cutPixels) + (319-cutPixels)))
-                {
-                    distance = 0;
-					amplitude = 0;
-                }
-
-                Convert_To_RGB24((double)distance, pTex, 0.0f, maxDistance);
-				dcs1.at<Vec3b>(y, x)[0] = pTex->b;
-				dcs1.at<Vec3b>(y, x)[1] = pTex->g;
-				dcs1.at<Vec3b>(y, x)[2] = pTex->r;
-
-				if(frame->dataType == Frame::DISTANCE_AMPLITUDE){
-					setAmplitudeColor(dcs2, x, y, amplitude, 2897);
-				}
-				else if( frame->dataType == Frame::DISTANCE_GRAYSCALE ){
-					setGrayscaleColor(dcs3, x, y, grayscale, 2048);
-				}
-				else if( frame->dataType == Frame::DISTANCE_AMPLITUDE_GRAYSCALE ){
-					setAmplitudeColor(dcs2, x, y, amplitude, 2897);
-					setGrayscaleColor(dcs3, x, y, grayscale, 2048);
-				}
-
-                if (distance > 0 && distance < maxDistance )
-                {
-                    if(cartesian){
-                        cartesianTransform.transformPixel(pc, y+roi_topY, distance, px, py, pz, transformAngle);
-                        p.x = static_cast<float>(pz / 1000.0); //mm -> m
-                        p.y = static_cast<float>(px / 1000.0);
-                        p.z = static_cast<float>(-py / 1000.0);
-
-#ifdef USED_INTENSITY
-                        if(frame->dataType == Frame::DISTANCE_AMPLITUDE) p.intensity = static_cast<float>(amplitude);
-                        else p.intensity = static_cast<float>(pz / 1000.0);
-#else        
-                        p.r = dcs2.at<Vec3b>(y, x)[0];
-                        p.g = dcs2.at<Vec3b>(y, x)[1];
-                        p.b = dcs2.at<Vec3b>(y, x)[2];
-#endif                        
-                        
-                    }else{
-                        p.x = distance / 1000.0;
-                        p.y = -(160-pc) / 100.0;
-                        p.z = (120-y) / 100.0;
-#ifdef USED_INTENSITY
-                        if(frame->dataType == Frame::DISTANCE_AMPLITUDE) p.intensity =  static_cast<float>(amplitude);
-                        else p.intensity = static_cast<float>(distance / 1000.0);
-#endif
-                    }
-
-                    if(y == 120)
-                    {
-                        //ranges[i] = count;
-                        scan.ranges[frame->width-x-1] = (double)distance*0.001;
-                        scan.intensities[frame->width-x-1] = amplitude;
-                    }
-                
-                }else{
-                    p.x = std::numeric_limits<float>::quiet_NaN();
-                    p.y = std::numeric_limits<float>::quiet_NaN();
-                    p.z = std::numeric_limits<float>::quiet_NaN();
-                }
-
-//dataCheck
-//area0
-                if(areaBtn[0])
-                {
-                    if(p.x >= x_min[0] && p.x <= x_max[0] &&
-                    p.y >= y_min[0] && p.y <= y_max[0] &&
-                    p.z >= z_min[0] && p.z <= z_max[0]
-                    )
-                    {
-                        pointCount[0]++;
-                    }
-                    if(pointCount[0] > pointLimit[0])
-                        pointDetect[0] = true;
-                    else
-                        pointDetect[0] = false; 
-                }
-
-//area1
-                if(areaBtn[1])
-                {
-                    if(p.x >= x_min[1] && p.x <= x_max[1] &&
-                    p.y >= y_min[1] && p.y <= y_max[1] &&
-                    p.z >= z_min[1] && p.z <= z_max[1]
-                    )
-                    {
-                        pointCount[1]++;
-                    }
-                    if(pointCount[1] > pointLimit[1])
-                        pointDetect[1] = true;
-                    else
-                        pointDetect[1] = false; 
-                }
-
-//area2
-                if(areaBtn[2])
-                {
-                    if(p.x >= x_min[2] && p.x <= x_max[2] &&
-                    p.y >= y_min[2] && p.y <= y_max[2] &&
-                    p.z >= z_min[2] && p.z <= z_max[2]
-                    )
-                    {
-                        pointCount[2]++;
-                    }
-                    if(pointCount[2] > pointLimit[2])
-                        pointDetect[2] = true;
-                    else
-                        pointDetect[2] = false; 
-                }
-
-//area3
-                if(areaBtn[3])
-                {
-                    if(p.x >= x_min[3] && p.x <= x_max[3] &&
-                    p.y >= y_min[3] && p.y <= y_max[3] &&
-                    p.z >= z_min[3] && p.z <= z_max[3]
-                    )
-                    {
-                        pointCount[3]++;
-                    }
-                    if(pointCount[3] > pointLimit[3])
-                        pointDetect[3] = true;
-                    else
-                        pointDetect[3] = false; 
-                }
             }
-        }
-
-		if( frame->dataType == Frame::DISTANCE ){
-			dcs1 = addDistanceInfo(dcs1, frame);
-		}
-		else if( frame->dataType == Frame::DISTANCE_AMPLITUDE ){
-			cv::hconcat(dcs1, dcs2, dcs1);
-			dcs1 = addDistanceInfo(dcs1, frame);
-		}
-		else if( frame->dataType == Frame::DISTANCE_GRAYSCALE ){
-			cv::hconcat(dcs1, dcs3, dcs1);
-			dcs1 = addDistanceInfo(dcs1, frame);
-		}
-		else if( frame->dataType == Frame::DISTANCE_AMPLITUDE_GRAYSCALE ){
-			cv::hconcat(dcs1, dcs2, dcs1);
-			cv::hconcat(dcs1, dcs3, dcs1);
-			dcs1 = addDistanceInfo(dcs1, frame);
-		}
-		else if( frame->dataType == Frame::GRAYSCALE ){
-			dcs1 = addDistanceInfo(dcs3, frame);
-		}
-		else if(frame->dataType == Frame::DCS){
-			cv::hconcat(dcs1, dcs2, dcs1);
-			cv::hconcat(dcs3, dcs4, dcs3);
-			cv::vconcat(dcs1, dcs3, dcs1);
-			dcs1 = addDCSInfo(dcs1, frame);
+			else{
+				dist2D_caption = format("2D X:%d Y:%d <%d>mm", xpos, ypos, frame->distance2D[ypos][xpos]);
+				dist3D_caption = format("3D X:%.1fmm Y:%.1fmm Z:%.1fmm", frame->distance3D[OUT_X][ypos][xpos], frame->distance3D[OUT_Y][ypos][xpos], frame->distance3D[OUT_Z][ypos][xpos]);
+			}
 		}
 		
-		if(cvShow == true)
-		{
-			imshow(winName, dcs1);
-			waitKey(1);
-		}
-        
-        pointCloud2Publisher.publish(cloud);
-        cv_ptr->header.stamp = ros::Time::now();
-        cv_ptr->header.frame_id = "roboscan_frame";
-        cv_ptr->image = dcs1;
-        cv_ptr->encoding = "bgr8";
+		info_caption = format("%s:%dx%d %.2f'C, %d fps", toString(frame->operationMode), frame->width, frame->height, frame->temperature, viewerParam.frameCount);
 
-        imagePublisher.publish(cv_ptr->toImageMsg());
-        scanPub.publish(scan);
+		putText(infoImage, info_caption.c_str(), Point(10, 23), FONT_HERSHEY_SIMPLEX, 0.6, Scalar(0, 0, 0), 1, cv::LINE_AA);
+		putText(infoImage, dist2D_caption.c_str(), Point(10, 46), FONT_HERSHEY_SIMPLEX, 0.6, Scalar(0, 0, 0), 1, cv::LINE_AA);
+		putText(infoImage, dist3D_caption.c_str(), Point(10, 70), FONT_HERSHEY_SIMPLEX, 0.6, Scalar(0, 0, 0), 1, cv::LINE_AA);
+		vconcat(distMat, infoImage, distMat);
+	}
+	else{
+		Mat infoImage(DISTANCE_INFO_HEIGHT, distMat.cols, CV_8UC3, Scalar(255, 255, 255));
 
-        area0Pub.publish(area0Box);
-        area1Pub.publish(area1Box);
-        area2Pub.publish(area2Box);
-        area3Pub.publish(area3Box);
-
-
-        msgs.header.seq = frameSeq;
-        msgs.header.frame_id = "roboscan_frame";
-        msgs.header.stamp = ros::Time::now();
-        msgs.area0 = pointDetect[0];
-        msgs.point0 = pointCount[0];
-
-        msgs.area1 = pointDetect[1];
-        msgs.point1 = pointCount[1];
-
-        msgs.area2 = pointDetect[2];
-        msgs.point2 = pointCount[2];
-
-        msgs.area3 = pointDetect[3];    
-        msgs.point3 = pointCount[3];                       
-        areaMsgsPublisher.publish(msgs);
-
-        delete[] pTex;
-    }
-        if(paramSave)
-        {
-            paramDump();
-            paramSave = false;
-        }
-}
-
-
-void reConnection(const ros::TimerEvent&) {
-    if(nanosys::TcpConnection::reConnect == true)
-    {
-        setParameters();
-        nanosys::TcpConnection::reConnect = false;
-        timer.stop();
-    }
-    
-}
-
-//===================================================
-
-void initialise()
-{
-    frameSeq = 0;
-    ros::NodeHandle nh("~");
-
-    nh.getParam("lens_Type", lensType);
-    nh.getParam("lens_center_offset_x", lensCenterOffsetX);
-    nh.getParam("lens_center_offset_y", lensCenterOffsetY);
-    nh.getParam("start_stream", startStream);
-    nh.getParam("image_type", imageType);
-    nh.getParam("hdr_mode", hdr_mode);
-    nh.getParam("int0", int0);
-    nh.getParam("int1", int1);
-    nh.getParam("int2", int2);
-    nh.getParam("int_gray", intGr);
-    nh.getParam("frequency_modulation", frequencyModulation);
-    nh.getParam("channel", channel);   
-    nh.getParam("min_amplitude", minAmplitude);
-    nh.getParam("median_filter", medianFilter);
-    nh.getParam("average_filter", averageFilter);
-    nh.getParam("temporal_filter_factor", temporalFilterFactor);
-    nh.getParam("temporal_filter_threshold", temporalFilterThreshold);
-    nh.getParam("edge_threshold", edgeThreshold);
-    nh.getParam("temporal_edge_threshold_low", temporalEdgeThresholdLow);
-    nh.getParam("temporal_edge_threshold_high", temporalEdgeThresholdHigh);
-    nh.getParam("interference_detection_limit", interferenceDetectionLimit);
-    nh.getParam("use_last_value", useLastValue);
-    nh.getParam("cartesian", cartesian);
-    nh.getParam("publish_point_cloud", publishPointCloud);	
-    nh.getParam("transform_angle", transformAngle);
-    nh.getParam("cut_pixels", cutPixels);
-    nh.getParam("cv_show", cvShow);
-
-
-    //Area 0
-    nh.getParam("area0", areaBtn[0]);
-    nh.getParam("a0_point_limit", pointLimit[0]);
-    nh.getParam("a0_length_scale", areaScaleX[0]);
-    nh.getParam("a0_width_scale", areaScaleY[0]);
-    nh.getParam("a0_height_scale", areaScaleZ[0]);   
-
-    nh.getParam("a0_length_position", areaPosX[0]);
-    nh.getParam("a0_width_position", areaPosY[0]);
-    nh.getParam("a0_height_position", areaPosZ[0]);   
-    
-    //Area 1
-    nh.getParam("area1", areaBtn[1]);
-    nh.getParam("a1_point_limit", pointLimit[1]);
-    nh.getParam("a1_length_scale", areaScaleX[1]);
-    nh.getParam("a1_width_scale", areaScaleY[1]);
-    nh.getParam("a1_height_scale", areaScaleZ[1]);   
-
-    nh.getParam("a1_length_position", areaPosX[1]);
-    nh.getParam("a1_width_position", areaPosY[1]);
-    nh.getParam("a1_height_position", areaPosZ[1]);  
-
-    //Area 2
-    nh.getParam("area2", areaBtn[2]);
-    nh.getParam("a2_point_limit", pointLimit[2]);
-    nh.getParam("a2_length_scale", areaScaleX[2]);
-    nh.getParam("a2_width_scale", areaScaleY[2]);
-    nh.getParam("a2_height_scale", areaScaleZ[2]);   
-
-    nh.getParam("a2_length_position", areaPosX[2]);
-    nh.getParam("a2_width_position", areaPosY[2]);
-    nh.getParam("a2_height_position", areaPosZ[2]);  
-
-    //Area 3
-    nh.getParam("area3", areaBtn[3]);
-    nh.getParam("a3_point_limit", pointLimit[3]);
-    nh.getParam("a3_length_scale", areaScaleX[3]);
-    nh.getParam("a3_width_scale", areaScaleY[3]);
-    nh.getParam("a3_height_scale", areaScaleZ[3]);   
-
-    nh.getParam("a3_length_position", areaPosX[3]);
-    nh.getParam("a3_width_position", areaPosY[3]);
-    nh.getParam("a3_height_position", areaPosZ[3]);  
-
-    nh.getParam("set_ip", setIpaddress);
-    nh.getParam("set_subnetmask", setSubnetmask);
-    nh.getParam("set_gateway", setGateway);
-
-    //advertise publishers
-    distanceImagePublisher = nh.advertise<sensor_msgs::Image>("distance_image_raw", 1000);
-    amplitudeImagePublisher = nh.advertise<sensor_msgs::Image>("amplitude_image_raw", 1000);
-    dcsImagePublisher = nh.advertise<sensor_msgs::Image>("dcs_image_rawc", 1000);
-
-
-
-
-#ifdef USED_INTENSITY
-    pointCloud2Publisher = nh.advertise<pcl::PointCloud<pcl::PointXYZI> > ("points", 100);
-#else
-    pointCloud2Publisher = nh.advertise<pcl::PointCloud<pcl::PointXYZRGB> > ("points", 100);
-#endif
-    
-    cameraInfoPublisher = nh.advertise<sensor_msgs::CameraInfo>("camera_info", 1000);
-    grayImagePublisher = nh.advertise<sensor_msgs::Image>("gray_image_raw", 1000);
-    scanPub = nh.advertise<sensor_msgs::LaserScan>("scan", 50);
-    area0Pub = nh.advertise<visualization_msgs::Marker>("area0", 1000);
-    area1Pub = nh.advertise<visualization_msgs::Marker>("area1", 1000);
-    area2Pub = nh.advertise<visualization_msgs::Marker>("area2", 1000); 
-    area3Pub = nh.advertise<visualization_msgs::Marker>("area3", 1000);       
-
-
-    //area advertise publishers
-    areaMsgsPublisher = nh.advertise<roboscan_nsl3130::custom_pub_msg>("area_msg", 100);
-
-
-
-    //advertise image Publisher
-    image_transport::ImageTransport it_(nh);
-    imagePublisher = it_.advertise("image_distance", 1000);
-
-
-
-
-    //advertise services
-    cameraInfoService = nh.advertiseService("set_camera_info", setCameraInfo);
-
-    //connect to interface
-    connectionCameraInfo = interface.subscribeCameraInfo([&](std::shared_ptr<CameraInfo> ci) -> void { updateCameraInfo(ci); });
-    connectionFrames = interface.subscribeFrame([&](std::shared_ptr<Frame> f) -> void {  updateFrame(f); });
-
-    cartesianTransform.initLensTransform(sensorPixelSizeMM, width, height, lensCenterOffsetX, lensCenterOffsetY, lensType); //0.02 mm - sensor pixel size
-    old_lensCenterOffsetX = lensCenterOffsetX;
-    old_lensCenterOffsetY = lensCenterOffsetY;
-    old_lensType = lensType;
-
-	int numSteps = NUM_COLORS;
-	unsigned char red, green, blue;
-
-	for(int i=0;  i< numSteps; i++)
-	{
-	  createColorMapPixel(numSteps, i, red, green, blue);
-	  colorVector.push_back(Vec3b(blue, green, red));
+		string info_caption = format("%s:%dx%d %.2f'C, %d fps", toString(frame->operationMode), frame->width, frame->height, frame->temperature, viewerParam.frameCount);
+		putText(infoImage, info_caption.c_str(), Point(10, 23), FONT_HERSHEY_SIMPLEX, 0.6, Scalar(0, 0, 0), 1, cv::LINE_AA);		
+		vconcat(distMat, infoImage, distMat);
 	}
 
-
-    timer = nh.createTimer(ros::Duration(1.0), reConnection);
-    ROS_INFO("roboscan_nsl3130 node");
-
-//Box Create
-//area0
-
-    area0Box.header.frame_id = "roboscan_frame";
-    area0Box.ns = "Markers_Box_" + std::to_string(0);
-    area0Box.id = 0;
-    area0Box.type = visualization_msgs::Marker::CUBE;
-    area0Box.action = visualization_msgs::Marker::ADD;
-    area0Box.pose.position.x = areaScaleX[0] / 2.0 + areaPosX[0];
-    area0Box.pose.position.y = areaPosY[0];
-    area0Box.pose.position.z = areaPosZ[0];
-    area0Box.pose.orientation.x = 0.0;
-    area0Box.pose.orientation.y = 0.0;
-    area0Box.pose.orientation.z = 0.0; 
-    area0Box.pose.orientation.w = 1.0;
-    area0Box.scale.x = areaScaleX[0];
-    area0Box.scale.y = areaScaleY[0];
-    area0Box.scale.z = areaScaleZ[0];
-
-    area0Box.color.r = 1.0f;
-    area0Box.color.g = 0.0f;    
-    area0Box.color.b = 0.0f;
-    area0Box.color.a = 0.3f;
-
-//marker 1
-    area1Box.header.frame_id = "roboscan_frame";
-    area1Box.ns = "Markers_Box_" + std::to_string(1);
-    area1Box.id = 1;
-    area1Box.type = visualization_msgs::Marker::CUBE;
-    area1Box.action = visualization_msgs::Marker::ADD;
-    area1Box.pose.position.x = areaScaleX[1] / 2.0 + areaPosX[1];
-    area1Box.pose.position.y = areaPosY[1];
-    area1Box.pose.position.z = areaPosZ[1];
-    area1Box.pose.orientation.x = 0.0;
-    area1Box.pose.orientation.y = 0.0;
-    area1Box.pose.orientation.z = 0.0; 
-    area1Box.pose.orientation.w = 1.0;
-    area1Box.scale.x = areaScaleX[1];
-    area1Box.scale.y = areaScaleY[1];
-    area1Box.scale.z = areaScaleZ[1];
-
-    area1Box.color.r = 1.0f;
-    area1Box.color.g = 1.0f;    
-    area1Box.color.b = 0.0f;
-    area1Box.color.a = 0.3f;
-
-//area2
-    area2Box.header.frame_id = "roboscan_frame";
-    area2Box.ns = "Markers_Box_" + std::to_string(2);
-    area2Box.id = 2;
-    area2Box.type = visualization_msgs::Marker::CUBE;
-    area2Box.action = visualization_msgs::Marker::ADD;
-    area2Box.pose.position.x = areaScaleX[2] / 2.0 + areaPosX[2];
-    area2Box.pose.position.y = areaPosY[2];
-    area2Box.pose.position.z = areaPosZ[2];
-    area2Box.pose.orientation.x = 0.0;
-    area2Box.pose.orientation.y = 0.0;
-    area2Box.pose.orientation.z = 0.0; 
-    area2Box.pose.orientation.w = 1.0;
-    area2Box.scale.x = areaScaleX[2];
-    area2Box.scale.y = areaScaleY[2];
-    area2Box.scale.z = areaScaleZ[2];
-
-    area2Box.color.r = 0.5f;
-    area2Box.color.g = 1.0f;    
-    area2Box.color.b = 0.0f;
-    area2Box.color.a = 0.3f;
-
-//area3
-    area3Box.header.frame_id = "roboscan_frame";
-    area3Box.ns = "Markers_Box_" + std::to_string(3);
-    area3Box.id = 3;
-    area3Box.type = visualization_msgs::Marker::CUBE;
-    area3Box.action = visualization_msgs::Marker::ADD;
-    area3Box.pose.position.x = areaScaleX[3] / 2.0 + areaPosX[3];
-    area3Box.pose.position.y = areaPosY[3];
-    area3Box.pose.position.z = areaPosZ[3];
-    area3Box.pose.orientation.x = 0.0;
-    area3Box.pose.orientation.y = 0.0;
-    area3Box.pose.orientation.z = 0.0; 
-    area3Box.pose.orientation.w = 1.0;
-    area3Box.scale.x = areaScaleX[3];
-    area3Box.scale.y = areaScaleY[3];
-    area3Box.scale.z = areaScaleZ[3];
-
-    area3Box.color.r = 0.0f;
-    area3Box.color.g = 1.0f;    
-    area3Box.color.b = 0.0f;
-    area3Box.color.a = 0.3f;
-
-    interface.tcpInitialize(setIpaddress);
-    
+	return distMat;
 }
 
+void roboscanPublisher::setMatrixColor(Mat image, int x, int y, NslVec3b color)
+{
+	image.at<Vec3b>(y,x)[0] = color.b;
+	image.at<Vec3b>(y,x)[1] = color.g;
+	image.at<Vec3b>(y,x)[2] = color.r;
+}
+
+void roboscanPublisher::publishFrame(NslPCD *frame)
+{
+    ros::Time data_stamp = ros::Time::now();
+
+	cv::Mat distanceMat(frame->height, frame->width, CV_8UC3, Scalar(255, 255, 255));	// distance
+	cv::Mat amplitudeMat(frame->height, frame->width, CV_8UC3, Scalar(255, 255, 255));	// amplitude
+#ifdef image_transfer_function
+	cv::Mat rgbMat(NSL_RGB_IMAGE_HEIGHT, NSL_RGB_IMAGE_WIDTH, CV_8UC3, Scalar(255, 255, 255));
+#endif
 
 
+	if(frame->operationMode == OPERATION_MODE_OPTIONS::DISTANCE_MODE 
+		|| frame->operationMode == OPERATION_MODE_OPTIONS::DISTANCE_AMPLITUDE_MODE 
+		|| frame->operationMode == OPERATION_MODE_OPTIONS::DISTANCE_GRAYSCALE_MODE 
+		|| frame->operationMode == OPERATION_MODE_OPTIONS::RGB_DISTANCE_MODE 
+		|| frame->operationMode == OPERATION_MODE_OPTIONS::RGB_DISTANCE_AMPLITUDE_MODE 
+		|| frame->operationMode == OPERATION_MODE_OPTIONS::RGB_DISTANCE_GRAYSCALE_MODE )
+	{
+		sensor_msgs::Image imgDistance;
 
-//==========================================================================
+		std::vector<uint8_t> result;
+		result.reserve(frame->height * frame->width * 2);
 
-int main(int argc, char **argv)
-{   
-    //if(ros::console::set_logger_level(ROSCONSOLE_DEFAULT_NAME, ros::console::levels::Debug)) ros::console::notifyLoggerLevelsChanged();
+		int xMin = frame->roiXMin;
+		int yMin = frame->roiYMin;
+		
+		for (int y = 0; y < frame->height; ++y) {
+			for (int x = 0; x < frame->width; ++x) {
+				result.push_back(static_cast<uint8_t>(frame->distance2D[y+yMin][x+xMin] & 0xFF));		 // LSB
+				result.push_back(static_cast<uint8_t>((frame->distance2D[y+yMin][x+xMin] >> 8) & 0xFF)); // MSB
 
-    ros::init(argc, argv, "roboscan_publish_node");
+				setMatrixColor(distanceMat, x+xMin, y+yMin, nsl_getDistanceColor(frame->distance2D[y+yMin][x+xMin]));
+			}
+		}
 
+		imgDistance.header.stamp = data_stamp;
+		imgDistance.header.frame_id = viewerParam.frame_id;
+		imgDistance.height = static_cast<uint32_t>(frame->height);
+		imgDistance.width = static_cast<uint32_t>(frame->width);
+		imgDistance.encoding = sensor_msgs::image_encodings::MONO16;
+		imgDistance.step = imgDistance.width * 2;
+		imgDistance.is_bigendian = 0;
+		imgDistance.data = result;
+		imgDistancePub.publish(imgDistance);
+	}
 
-    dynamic_reconfigure::Server<roboscan_nsl3130::roboscan_nsl3130Config> server;
-    dynamic_reconfigure::Server<roboscan_nsl3130::roboscan_nsl3130Config>::CallbackType f;
-    f = boost::bind(&updateConfig, _1, _2);
-    server.setCallback(f);
+	if(frame->operationMode == OPERATION_MODE_OPTIONS::DISTANCE_AMPLITUDE_MODE 
+		|| frame->operationMode == OPERATION_MODE_OPTIONS::RGB_DISTANCE_AMPLITUDE_MODE)
+	{
+		sensor_msgs::Image imgAmpl;
 
-   
+		std::vector<uint8_t> result;
+		result.reserve(frame->height * frame->width * 2);
 
-    initialise();
-    setParameters();
-    startStreaming();
+		int xMin = frame->roiXMin;
+		int yMin = frame->roiYMin;
 
-    
+		for (int y = 0; y < frame->height; ++y) {
+			for (int x = 0; x < frame->width; ++x) {
+				result.push_back(static_cast<uint8_t>(frame->amplitude[y+yMin][x+xMin] & 0xFF));		// LSB
+				result.push_back(static_cast<uint8_t>((frame->amplitude[y+yMin][x+xMin] >> 8) & 0xFF)); // MSB
 
-    ros::spin();
+				setMatrixColor(amplitudeMat, x+xMin, y+yMin, nsl_getAmplitudeColor(frame->amplitude[y+yMin][x+xMin]));
+			}
+		}
+
+		imgAmpl.header.stamp = data_stamp;
+		imgAmpl.header.frame_id = viewerParam.frame_id;
+		imgAmpl.height = static_cast<uint32_t>(frame->height);
+		imgAmpl.width = static_cast<uint32_t>(frame->width);
+		imgAmpl.encoding = sensor_msgs::image_encodings::MONO16;
+		imgAmpl.step = imgAmpl.width * 2;
+		imgAmpl.is_bigendian = 0;
+		imgAmpl.data = result;
+		imgAmplPub.publish(imgAmpl);
+	}	
+
+	
+	if(frame->operationMode == OPERATION_MODE_OPTIONS::GRAYSCALE_MODE
+		|| frame->operationMode == OPERATION_MODE_OPTIONS::DISTANCE_GRAYSCALE_MODE 
+		|| frame->operationMode == OPERATION_MODE_OPTIONS::RGB_DISTANCE_GRAYSCALE_MODE)
+	{
+		sensor_msgs::Image imgGray;
+
+		std::vector<uint8_t> result;
+		result.reserve(frame->height * frame->width * 2);
+
+		int xMin = frame->roiXMin;
+		int yMin = frame->roiYMin;
+		
+		for (int y = 0; y < frame->height; ++y) {
+			for (int x = 0; x < frame->width; ++x) {
+				result.push_back(static_cast<uint8_t>(frame->amplitude[y+yMin][x+xMin] & 0xFF));		// LSB
+				result.push_back(static_cast<uint8_t>((frame->amplitude[y+yMin][x+xMin] >> 8) & 0xFF)); // MSB
+
+				setMatrixColor(amplitudeMat, x+xMin, y+yMin, nsl_getAmplitudeColor(frame->amplitude[y+yMin][x+xMin]));
+			}
+		}
+
+		imgGray.header.stamp = data_stamp;
+		imgGray.header.frame_id = viewerParam.frame_id;
+		imgGray.height = static_cast<uint32_t>(frame->height);
+		imgGray.width = static_cast<uint32_t>(frame->width);
+		imgGray.encoding = sensor_msgs::image_encodings::MONO16;
+		imgGray.step = imgGray.width * 2;
+		imgGray.is_bigendian = 0;
+		imgGray.data = result;
+		imgGrayPub.publish(imgGray);
+	}		
+	
+
+#ifdef image_transfer_function
+	if(frame->operationMode == OPERATION_MODE_OPTIONS::RGB_MODE 
+		|| frame->operationMode == OPERATION_MODE_OPTIONS::RGB_DISTANCE_MODE 
+		|| frame->operationMode == OPERATION_MODE_OPTIONS::RGB_DISTANCE_AMPLITUDE_MODE
+		|| frame->operationMode == OPERATION_MODE_OPTIONS::RGB_DISTANCE_GRAYSCALE_MODE)
+	{
+	
+		int totalPixels = NSL_RGB_IMAGE_HEIGHT * NSL_RGB_IMAGE_WIDTH;
+		cv::Vec3b* dstPtr = rgbMat.ptr<cv::Vec3b>();
+		NslOption::NslVec3b* srcPtr = &frame->rgb[0][0];
+		
+		for (int i = 0; i < totalPixels; ++i) {
+			dstPtr[i] = cv::Vec3b(
+				srcPtr[i].b,  // blue
+				srcPtr[i].g,  // green
+				srcPtr[i].r   // red
+			);
+		}
+
+		cv_bridge::CvImagePtr cv_ptr(new cv_bridge::CvImage);
+		cv_ptr->header.stamp = data_stamp;
+		cv_ptr->header.frame_id = viewerParam.frame_id;
+		cv_ptr->image = rgbMat;
+		cv_ptr->encoding = "bgr8";
+	
+		imagePublisher.publish(cv_ptr->toImageMsg());		
+	}
+#endif
+
+	if( frame->operationMode != OPERATION_MODE_OPTIONS::RGB_MODE
+		&& frame->operationMode != OPERATION_MODE_OPTIONS::GRAYSCALE_MODE )
+	{
+		const size_t nPixel = frame->width * frame->height;
+		pcl::PointCloud<pcl::PointXYZI>::Ptr cloud(new pcl::PointCloud<pcl::PointXYZI>());
+		cloud->header.frame_id = viewerParam.frame_id;
+		cloud->header.stamp = pcl_conversions::toPCL(data_stamp);
+		//cloud->header.stamp = static_cast<uint64_t>(data_stamp.nanoseconds());
+		cloud->width = static_cast<uint32_t>(frame->width);
+		cloud->height = static_cast<uint32_t>(frame->height);
+		cloud->is_dense = false;
+		cloud->points.resize(nPixel);
+
+		int xMin = frame->roiXMin;
+		int yMin = frame->roiYMin;
+
+		for(int y = 0, index = 0; y < frame->height; y++)
+		{
+			for(int x = 0; x < frame->width; x++, index++)
+			{
+				pcl::PointXYZI &point = cloud->points[index];
+
+				if( frame->distance3D[OUT_Z][y+yMin][x+xMin] < NSL_LIMIT_FOR_VALID_DATA )
+				{
+					point.x = (double)(frame->distance3D[OUT_Z][y+yMin][x+xMin]/1000);
+					point.y = (double)(-frame->distance3D[OUT_X][y+yMin][x+xMin]/1000);
+					point.z = (double)(-frame->distance3D[OUT_Y][y+yMin][x+xMin]/1000);
+					point.intensity = frame->amplitude[y+yMin][x+xMin];
+				}
+				else{
+					point.x = std::numeric_limits<float>::quiet_NaN();
+					point.y = std::numeric_limits<float>::quiet_NaN();
+					point.z = std::numeric_limits<float>::quiet_NaN();
+					point.intensity = std::numeric_limits<float>::quiet_NaN();
+				}
+			}
+		}
+
+		
+		sensor_msgs::PointCloud2 msg;
+		pcl::toROSMsg(*cloud, msg);
+		msg.header.stamp = data_stamp;
+		msg.header.frame_id = viewerParam.frame_id;
+		pointcloudPub.publish(msg);  
+	}
+	
+	if(viewerParam.cvShow == true)
+	{	
+		getMouseEvent(mouseXpos, mouseYpos);
+			
+		if( frame->operationMode == OPERATION_MODE_OPTIONS::DISTANCE_MODE ){
+			distanceMat = addDistanceInfo(distanceMat, frame);
+		}
+		else if( frame->operationMode == OPERATION_MODE_OPTIONS::GRAYSCALE_MODE ){
+			distanceMat = addDistanceInfo(amplitudeMat, frame);
+		}
+		else if( frame->operationMode == OPERATION_MODE_OPTIONS::DISTANCE_AMPLITUDE_MODE ){
+			cv::hconcat(distanceMat, amplitudeMat, distanceMat);
+			distanceMat = addDistanceInfo(distanceMat, frame);
+		}
+		else if( frame->operationMode == OPERATION_MODE_OPTIONS::DISTANCE_GRAYSCALE_MODE ){
+			cv::hconcat(distanceMat, amplitudeMat, distanceMat);
+			distanceMat = addDistanceInfo(distanceMat, frame);
+		}
+		else if( frame->operationMode == OPERATION_MODE_OPTIONS::RGB_MODE ){
+			resize( rgbMat, rgbMat, Size( 640, 480 ), 0, 0);
+			distanceMat = rgbMat;
+		}
+		else if( frame->operationMode == OPERATION_MODE_OPTIONS::RGB_DISTANCE_MODE ){
+			resize( rgbMat, rgbMat, Size( distanceMat.cols, distanceMat.rows ), 0, 0);
+			hconcat( distanceMat, rgbMat, distanceMat );
+			distanceMat = addDistanceInfo(distanceMat, frame);
+		}
+		else if( frame->operationMode == OPERATION_MODE_OPTIONS::RGB_DISTANCE_AMPLITUDE_MODE ){
+			cv::hconcat(distanceMat, amplitudeMat, distanceMat);
+			resize( rgbMat, rgbMat, Size( distanceMat.cols, distanceMat.rows ), 0, 0);
+			vconcat( distanceMat, rgbMat, distanceMat );
+			distanceMat = addDistanceInfo(distanceMat, frame);
+		}
+		else if( frame->operationMode == OPERATION_MODE_OPTIONS::RGB_DISTANCE_GRAYSCALE_MODE ){
+			cv::hconcat(distanceMat, amplitudeMat, distanceMat);
+			resize( rgbMat, rgbMat, Size( distanceMat.cols, distanceMat.rows ), 0, 0);
+			vconcat( distanceMat, rgbMat, distanceMat );
+			distanceMat = addDistanceInfo(distanceMat, frame);
+		}
+		
+		imshow(winName, distanceMat);
+		waitKey(1);
+	}
+	
+}
+
+void roboscanPublisher::getMouseEvent( int &mouse_xpos, int &mouse_ypos )
+{
+	mouse_xpos = x_start;
+	mouse_ypos = y_start;
+}
+
+/*
+	ubuntu usb device
+	
+	sudo apt-get install libopencv-dev
+	sudo apt-get install libpcl-dev(1.8.1)
+
+	$ sudo vi /etc/udev/rules.d/defined_lidar.rules
+	KERNEL=="ttyACM*", ATTRS{idVendor}=="1FC9", ATTRS{idProduct}=="0094", MODE:="0777",SYMLINK+="ttyNsl3140"
+
+	$ service udev reload
+	$ service udev restart
+
+	ubuntu Network UDP speed up
+	sudo sysctl -w net.core.rmem_max=22020096
+	sudo sysctl -w net.core.rmem_default=22020096
+*/
+
+int main(int argc, char ** argv)
+{
+  ros::init(argc, argv, "roboscan_publish_node");
+  nanosys::roboscanPublisher rp;
+  rp.initialise();
+  ros::spin();
+  return 0;
 }
