@@ -393,21 +393,22 @@ void roboscanPublisher::setReconfigure()
 			}
 		}
 		
-		
-		nsl_setMinAmplitude(nsl_handle, nslConfig.minAmplitude);
-		nsl_setIntegrationTime(nsl_handle, nslConfig.integrationTime3D, nslConfig.integrationTime3DHdr1, nslConfig.integrationTime3DHdr2, nslConfig.integrationTimeGrayScale);
-		nsl_setHdrMode(nsl_handle, nslConfig.hdrOpt);
-		nsl_setFilter(nsl_handle, nslConfig.medianOpt, nslConfig.gaussOpt, nslConfig.temporalFactorValue, nslConfig.temporalThresholdValue, nslConfig.edgeThresholdValue, nslConfig.interferenceDetectionLimitValue, nslConfig.interferenceDetectionLastValueOpt);
-		nsl_set3DFilter(nsl_handle, viewerParam.pointCloudEdgeThreshold);
-		nsl_setAdcOverflowSaturation(nsl_handle, nslConfig.overflowOpt, nslConfig.saturationOpt);
-		nsl_setDualBeam(nsl_handle, nslConfig.dbModOpt, nslConfig.dbOpsOpt);
-		nsl_setModulation(nsl_handle, nslConfig.mod_frequencyOpt, nslConfig.mod_channelOpt, NslOption::FUNCTION_OPTIONS::FUNC_OFF);
-		nsl_setRoi(nsl_handle, nslConfig.roiXMin, nslConfig.roiYMin, nslConfig.roiXMax, nslConfig.roiYMax);
-		nsl_setGrayscaleillumination(nsl_handle, nslConfig.grayscaleIlluminationOpt);
-		
-		nsl_saveConfiguration(nsl_handle);
-
-		startStreaming();
+		if( nsl_handle >= 0 ){
+			nsl_setMinAmplitude(nsl_handle, nslConfig.minAmplitude);
+			nsl_setIntegrationTime(nsl_handle, nslConfig.integrationTime3D, nslConfig.integrationTime3DHdr1, nslConfig.integrationTime3DHdr2, nslConfig.integrationTimeGrayScale);
+			nsl_setHdrMode(nsl_handle, nslConfig.hdrOpt);
+			nsl_setFilter(nsl_handle, nslConfig.medianOpt, nslConfig.gaussOpt, nslConfig.temporalFactorValue, nslConfig.temporalThresholdValue, nslConfig.edgeThresholdValue, nslConfig.interferenceDetectionLimitValue, nslConfig.interferenceDetectionLastValueOpt);
+			nsl_set3DFilter(nsl_handle, viewerParam.pointCloudEdgeThreshold);
+			nsl_setAdcOverflowSaturation(nsl_handle, nslConfig.overflowOpt, nslConfig.saturationOpt);
+			nsl_setDualBeam(nsl_handle, nslConfig.dbModOpt, nslConfig.dbOpsOpt);
+			nsl_setModulation(nsl_handle, nslConfig.mod_frequencyOpt, nslConfig.mod_channelOpt, NslOption::FUNCTION_OPTIONS::FUNC_OFF);
+			nsl_setRoi(nsl_handle, nslConfig.roiXMin, nslConfig.roiYMin, nslConfig.roiXMax, nslConfig.roiYMax);
+			nsl_setGrayscaleillumination(nsl_handle, nslConfig.grayscaleIlluminationOpt);
+			
+			nsl_saveConfiguration(nsl_handle);
+			
+			startStreaming();
+		}
 	}
 
 	setWinName();
@@ -471,37 +472,7 @@ void roboscanPublisher::initialise()
     load_params(cfg);
 
     ROS_INFO("Attempting to connect to device at IP: %s", viewerParam.ipAddr.c_str());
-    nsl_handle = nsl_open(viewerParam.ipAddr.c_str(), &nslConfig, NslOption::FUNCTION_OPTIONS::FUNC_ON);
-
-	//viewerParam.netMask = cfg.net_mask;
-	//viewerParam.gwAddr = cfg.gw_addr;
-    nslConfig.hdrOpt = static_cast<NslOption::HDR_OPTIONS>(cfg.hdr_mode);
-    nslConfig.integrationTime3D = cfg.int_0;
-    nslConfig.integrationTime3DHdr1 = cfg.int_1;
-    nslConfig.integrationTime3DHdr2 = cfg.int_2;
-    nslConfig.integrationTimeGrayScale = cfg.int_gr;
-    nslConfig.minAmplitude = cfg.min_amplitude;
-    nslConfig.mod_frequencyOpt = static_cast<NslOption::MODULATION_OPTIONS>(cfg.mod_index);
-    nslConfig.mod_channelOpt = static_cast<NslOption::MODULATION_CH_OPTIONS>(cfg.channel);
-    nslConfig.roiXMin = cfg.roi_left_x;
-    nslConfig.roiYMin = cfg.roi_top_y;
-    nslConfig.roiXMax = cfg.roi_right_x;
-    nslConfig.roiYMax = RIGHTY_MAX;
-    nslConfig.medianOpt = static_cast<NslOption::FUNCTION_OPTIONS>(cfg.median_filter);
-    nslConfig.gaussOpt = static_cast<NslOption::FUNCTION_OPTIONS>(cfg.gaussian_filter);
-    nslConfig.temporalFactorValue = static_cast<int>(cfg.temporal_filter_factor * 1000);
-    nslConfig.temporalThresholdValue = cfg.temporal_filter_threshold;
-    nslConfig.edgeThresholdValue = cfg.edge_filter_threshold;
-    nslConfig.interferenceDetectionLimitValue = cfg.interference_detection_limit;
-    nslConfig.interferenceDetectionLastValueOpt = static_cast<NslOption::FUNCTION_OPTIONS>(cfg.use_last_value);
-    nslConfig.dbModOpt = static_cast<NslOption::DUALBEAM_MOD_OPTIONS>(cfg.dual_beam);
-    nslConfig.dbOpsOpt = static_cast<NslOption::DUALBEAM_OPERATION_OPTIONS>(cfg.dual_beam_option);
-    nslConfig.grayscaleIlluminationOpt = static_cast<NslOption::FUNCTION_OPTIONS>(cfg.grayscale_led);
-    nslConfig.operationModeOpt = static_cast<NslOption::OPERATION_MODE_OPTIONS>(cfg.image_type);
-    nslConfig.lidarAngle = cfg.transform_angle;
-    nslConfig.lensType = static_cast<NslOption::LENS_TYPE>(cfg.lens_type);
-
-	
+    nsl_handle = nsl_open(viewerParam.ipAddr.c_str(), &nslConfig, NslOption::FUNCTION_OPTIONS::FUNC_ON);	
     if (nsl_handle >= 0)
     {
         ROS_INFO("Successfully connected. Reading settings from the device.");
