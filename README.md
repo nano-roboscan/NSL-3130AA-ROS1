@@ -9,6 +9,7 @@
  
 2. Build NSL-3130AA demo
 ```
+$ git clone --recurse-submodules https://github.com/nano-roboscan/NSL-3130AA-ROS1.git
 $ cd NSL-3130AA-ROS1/NSL3130_driver
 $ catkin_make
 $ source ./devel/setup.bash
