@@ -83,6 +83,7 @@ namespace nanosys {
 		~roboscanPublisher();
 
 		void initialise();
+		void initNslLibrary();
 		void threadCallback();
 
 		void setReconfigure();

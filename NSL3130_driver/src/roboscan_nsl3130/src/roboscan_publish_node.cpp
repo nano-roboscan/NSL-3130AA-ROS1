@@ -183,6 +183,11 @@ void roboscanPublisher::dynamicReconfigureCallback(roboscan_nsl3130::RoboscanNSL
 			viewerParam.saveParam	= true; 
 		}
     }
+    if (viewerParam.lidarAngle != config.transform_angle) {
+        viewerParam.lidarAngle = config.transform_angle;
+		viewerParam.reOpenLidar = true;
+        viewerParam.saveParam  = true; 
+    }
     if (viewerParam.frame_id != config.frame_id) {
         ROS_INFO("changed to frame ID %s -> %s", viewerParam.frame_id.c_str(), config.frame_id.c_str());
 		if (config.frame_id.empty())
@@ -198,10 +203,6 @@ void roboscanPublisher::dynamicReconfigureCallback(roboscan_nsl3130::RoboscanNSL
     if (viewerParam.pointCloudEdgeThreshold != config.pointcloud_edge) {
         viewerParam.pointCloudEdgeThreshold = config.pointcloud_edge;
         viewerParam.saveParam               = true; 
-    }
-    if (viewerParam.lidarAngle != config.transform_angle) {
-        viewerParam.lidarAngle = config.transform_angle;
-        viewerParam.saveParam  = true; 
     }
     if (config.hdr_mode >= 0 && config.hdr_mode <= 2) {
         nslConfig.hdrOpt = static_cast<NslOption::HDR_OPTIONS>(config.hdr_mode);
@@ -461,80 +462,92 @@ void roboscanPublisher::setWinName()
 	cv::setMouseCallback(winName, callback_mouse_click, NULL);
 }
 
+void roboscanPublisher::initNslLibrary()
+{
+	nslConfig.lidarAngle = viewerParam.lidarAngle;
+	nslConfig.lensType = static_cast<NslOption::LENS_TYPE>(viewerParam.lensType);
+	nsl_handle = nsl_open(viewerParam.ipAddr.c_str(), &nslConfig, FUNCTION_OPTIONS::FUNC_ON);
+	if( nsl_handle < 0 ){
+		std::cout << "nsl_open::handle open error::" << nsl_handle << std::endl;
+		return;
+	}
+
+	nsl_setMinAmplitude(nsl_handle, nslConfig.minAmplitude);
+	nsl_setIntegrationTime(nsl_handle, nslConfig.integrationTime3D, nslConfig.integrationTime3DHdr1, nslConfig.integrationTime3DHdr2, nslConfig.integrationTimeGrayScale);
+	nsl_setHdrMode(nsl_handle, nslConfig.hdrOpt);
+	nsl_setFilter(nsl_handle, nslConfig.medianOpt, nslConfig.gaussOpt, nslConfig.temporalFactorValue, nslConfig.temporalThresholdValue, nslConfig.edgeThresholdValue, nslConfig.interferenceDetectionLimitValue, nslConfig.interferenceDetectionLastValueOpt);
+	nsl_set3DFilter(nsl_handle, viewerParam.pointCloudEdgeThreshold);
+	nsl_setAdcOverflowSaturation(nsl_handle, nslConfig.overflowOpt, nslConfig.saturationOpt);
+	nsl_setDualBeam(nsl_handle, nslConfig.dbModOpt, nslConfig.dbOpsOpt);
+	nsl_setModulation(nsl_handle, nslConfig.mod_frequencyOpt, nslConfig.mod_channelOpt, nslConfig.mod_enabledAutoChannelOpt);
+	nsl_setRoi(nsl_handle, nslConfig.roiXMin, nslConfig.roiYMin, nslConfig.roiXMax, nslConfig.roiYMax);
+	nsl_setGrayscaleillumination(nsl_handle, nslConfig.grayscaleIlluminationOpt);
+
+	startStreaming();
+}
+
+
 void roboscanPublisher::initialise()
 {
-    std::cout<<"Init roboscan_nsl3130 node\n"<<std::endl;
+	std::cout<<"Init roboscan_nsl3130 node\n"<<std::endl;
 
-    roboscan_nsl3130::RoboscanNSL3130Config cfg =
-        roboscan_nsl3130::RoboscanNSL3130Config::__getDefault__();
+	roboscan_nsl3130::RoboscanNSL3130Config cfg = roboscan_nsl3130::RoboscanNSL3130Config::__getDefault__();
 
+	viewerParam.ipAddr = cfg.ip_addr;
+	viewerParam.frame_id = cfg.frame_id;
+	viewerParam.maxDistance = cfg.max_distance;
+	viewerParam.pointCloudEdgeThreshold = cfg.pointcloud_edge;
+	viewerParam.imageType = cfg.image_type;
+	viewerParam.lensType = cfg.lens_type;
+	viewerParam.lidarAngle = cfg.transform_angle;
+	viewerParam.cvShow = cfg.cv_show;
+	viewerParam.saveParam = false;
+	reconfigure = false;
 
-    load_params(cfg);
+	load_params(cfg);
+	initNslLibrary();
 
-    ROS_INFO("Attempting to connect to device at IP: %s", viewerParam.ipAddr.c_str());
-    nsl_handle = nsl_open(viewerParam.ipAddr.c_str(), &nslConfig, NslOption::FUNCTION_OPTIONS::FUNC_ON);	
-    if (nsl_handle >= 0)
-    {
-        ROS_INFO("Successfully connected. Reading settings from the device.");
-
-		nsl_setMinAmplitude(nsl_handle, nslConfig.minAmplitude);
-		nsl_setIntegrationTime(nsl_handle, nslConfig.integrationTime3D, nslConfig.integrationTime3DHdr1, nslConfig.integrationTime3DHdr2, nslConfig.integrationTimeGrayScale);
-		nsl_setHdrMode(nsl_handle, nslConfig.hdrOpt);
-		nsl_setFilter(nsl_handle, nslConfig.medianOpt, nslConfig.gaussOpt, nslConfig.temporalFactorValue, nslConfig.temporalThresholdValue, nslConfig.edgeThresholdValue, nslConfig.interferenceDetectionLimitValue, nslConfig.interferenceDetectionLastValueOpt);
-		nsl_set3DFilter(nsl_handle, viewerParam.pointCloudEdgeThreshold);
-		nsl_setAdcOverflowSaturation(nsl_handle, nslConfig.overflowOpt, nslConfig.saturationOpt);
-		nsl_setDualBeam(nsl_handle, nslConfig.dbModOpt, nslConfig.dbOpsOpt);
-		nsl_setModulation(nsl_handle, nslConfig.mod_frequencyOpt, nslConfig.mod_channelOpt, NslOption::FUNCTION_OPTIONS::FUNC_OFF);
-		nsl_setRoi(nsl_handle, nslConfig.roiXMin, nslConfig.roiYMin, nslConfig.roiXMax, nslConfig.roiYMax);
-		nsl_setGrayscaleillumination(nsl_handle, nslConfig.grayscaleIlluminationOpt);
-		
-        cfg.hdr_mode = static_cast<int>(nslConfig.hdrOpt);
-        cfg.int_0 = nslConfig.integrationTime3D;
-        cfg.int_1 = nslConfig.integrationTime3DHdr1;
-        cfg.int_2 = nslConfig.integrationTime3DHdr2;
-        cfg.int_gr = nslConfig.integrationTimeGrayScale;
-        cfg.min_amplitude = nslConfig.minAmplitude;
-        cfg.mod_index = static_cast<int>(nslConfig.mod_frequencyOpt);
-        cfg.channel = static_cast<int>(nslConfig.mod_channelOpt);
-        cfg.roi_left_x = nslConfig.roiXMin;
-        cfg.roi_top_y = nslConfig.roiYMin;
-        cfg.roi_right_x = nslConfig.roiXMax;
-        cfg.median_filter = (nslConfig.medianOpt == NslOption::FUNCTION_OPTIONS::FUNC_ON);
-        cfg.gaussian_filter = (nslConfig.gaussOpt == NslOption::FUNCTION_OPTIONS::FUNC_ON);
-        cfg.temporal_filter_factor = std::max(0, std::min(1000, nslConfig.temporalFactorValue)) / 1000.0;
-        cfg.temporal_filter_threshold = nslConfig.temporalThresholdValue;
-        cfg.edge_filter_threshold = nslConfig.edgeThresholdValue;
-        cfg.interference_detection_limit = nslConfig.interferenceDetectionLimitValue;
-        cfg.use_last_value = (nslConfig.interferenceDetectionLastValueOpt == NslOption::FUNCTION_OPTIONS::FUNC_ON);
-        cfg.dual_beam = static_cast<int>(nslConfig.dbModOpt);
-        cfg.dual_beam_option = static_cast<int>(nslConfig.dbOpsOpt);
-        cfg.grayscale_led = (nslConfig.grayscaleIlluminationOpt == NslOption::FUNCTION_OPTIONS::FUNC_ON);
+	ROS_INFO("Attempting to connect to device at IP: %s", viewerParam.ipAddr.c_str());
+	if (nsl_handle >= 0)
+	{
+		ROS_INFO("Successfully connected. Reading settings from the device.");
+		cfg.hdr_mode = static_cast<int>(nslConfig.hdrOpt);
+		cfg.int_0 = nslConfig.integrationTime3D;
+		cfg.int_1 = nslConfig.integrationTime3DHdr1;
+		cfg.int_2 = nslConfig.integrationTime3DHdr2;
+		cfg.int_gr = nslConfig.integrationTimeGrayScale;
+		cfg.min_amplitude = nslConfig.minAmplitude;
+		cfg.mod_index = static_cast<int>(nslConfig.mod_frequencyOpt);
+		cfg.channel = static_cast<int>(nslConfig.mod_channelOpt);
+		cfg.roi_left_x = nslConfig.roiXMin;
+		cfg.roi_top_y = nslConfig.roiYMin;
+		cfg.roi_right_x = nslConfig.roiXMax;
+		cfg.median_filter = (nslConfig.medianOpt == NslOption::FUNCTION_OPTIONS::FUNC_ON);
+		cfg.gaussian_filter = (nslConfig.gaussOpt == NslOption::FUNCTION_OPTIONS::FUNC_ON);
+		cfg.temporal_filter_factor = std::max(0, std::min(1000, nslConfig.temporalFactorValue)) / 1000.0;
+		cfg.temporal_filter_threshold = nslConfig.temporalThresholdValue;
+		cfg.edge_filter_threshold = nslConfig.edgeThresholdValue;
+		cfg.interference_detection_limit = nslConfig.interferenceDetectionLimitValue;
+		cfg.use_last_value = (nslConfig.interferenceDetectionLastValueOpt == NslOption::FUNCTION_OPTIONS::FUNC_ON);
+		cfg.dual_beam = static_cast<int>(nslConfig.dbModOpt);
+		cfg.dual_beam_option = static_cast<int>(nslConfig.dbOpsOpt);
+		cfg.grayscale_led = (nslConfig.grayscaleIlluminationOpt == NslOption::FUNCTION_OPTIONS::FUNC_ON);
 
 		startStreaming();
-    }
-    else
-    {
-        ROS_WARN("Failed to connect to the device. Falling back to settings from lidar_params.yaml");
-		viewerParam.ipAddr = cfg.ip_addr;
-		viewerParam.frame_id = cfg.frame_id;
-		viewerParam.maxDistance = cfg.max_distance;
-		viewerParam.pointCloudEdgeThreshold = cfg.pointcloud_edge;
-		viewerParam.imageType = cfg.image_type;
-		viewerParam.lensType = cfg.lens_type;
-		viewerParam.lidarAngle = cfg.transform_angle;
-		viewerParam.cvShow = cfg.cv_show;
-    }   
+	}
+	else
+	{
+		ROS_WARN("Failed to connect to the device. Falling back to settings from lidar_params.yaml");
+	}   
 
-    setWinName();
-    viewerParam.saveParam = false;
-    reconfigure = false;
+	setWinName();
 
 
-    if (dr_server_) { 
-        dr_server_->updateConfig(cfg);
-    }
-    
-    ROS_INFO("end initialise()\n");
+	if (dr_server_) { 
+		dr_server_->updateConfig(cfg);
+	}
+
+	ROS_INFO("end initialise()\n");
 }
 
 void roboscanPublisher::startStreaming()
