@@ -63,20 +63,6 @@ namespace nanosys {
 
 	class roboscanPublisher { 
 
-		static const int PIXEL_VALID_DATA = 64000;
-		static const int LOW_AMPLITUDE = 64001;
-		static const int ADC_OVERFLOW = 64002;
-		static const int SATURATION = 64003;
-		static const int BAD_PIXEL = 64004;
-		static const int INTERFERENCE = 64007;
-		static const int EDGE_FILTERED = 64008;
-
-		const int width   = 320;
-		const int width2  = 160;
-		const int height  = 240;
-		const int height2 = 120;
-		const double sensorPixelSizeMM = 0.02;
-
  	public:
 		ros::NodeHandle nh_;
 		roboscanPublisher();
@@ -87,7 +73,7 @@ namespace nanosys {
 		void threadCallback();
 
 		void setReconfigure();
-		void publishFrame(NslPCD *frame);
+		void publishFrame(NslPCD *frame, NslOption::NslVec3b *rgbframe);
 		void startStreaming();
 
 
