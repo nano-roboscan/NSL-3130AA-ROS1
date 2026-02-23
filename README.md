@@ -29,9 +29,9 @@ $ roslaunch roboscan_nsl3130 camera.Launch
   ![phase2](https://github.com/nano-roboscan/NSL-3130AA-ROS2/assets/106071093/4a134327-213f-4558-9fa7-47de543866c9)
 
 # Average FPS per Image type
-
-  ![fps](https://github.com/nano-roboscan/NSL-3130AA-ROS2/assets/106071093/532178f4-23ac-4eee-ae8d-a4f8fb03b747)
-
+```
+max 20 fps
+```
 
 # Set parameters
 ![bbbb](https://user-images.githubusercontent.com/106071093/226831796-d487fc42-5ae4-40c4-b5f9-e4f18af08d7c.png)
